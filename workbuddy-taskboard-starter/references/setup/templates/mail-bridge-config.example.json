@@ -10,7 +10,8 @@
   "imapHost": "imap.qq.com",
   "imapPort": 993,
 
-  "taskboardProjectId": "wb-demo",
+  "_projectId_note": "改成你自己的看板项目 id（先用 taskctl project list 查）。注意：写到不存在的项目 id 不会报错，只会把任务记到别处。",
+  "taskboardProjectId": "my-project",
   "pollIntervalSec": 60,
   "lookbackDays": 7,
 

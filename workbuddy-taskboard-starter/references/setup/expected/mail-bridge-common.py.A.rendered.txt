@@ -45,7 +45,7 @@ DEFAULT_CONFIG = {
     'smtpPort': 465,
     'imapHost': 'imap.qq.com',
     'imapPort': 993,
-    'taskboardProjectId': 'wb-demo',
+    'taskboardProjectId': 'my-project',
     'pollIntervalSec': 60,
     'lookbackDays': 7,
     'ackByEmail': True,

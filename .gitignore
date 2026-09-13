@@ -1,6 +1,8 @@
 # ---- 私密配置（最高优先级，手滑 git add -A 也带不上）----
 **/config.json
 !**/config.example.json
+# 本机私有字面量清单（扫描器用它抓自己人的隐私，本身必然含真实值）
+scan-secrets.local.json
 
 # ---- 运行态 ----
 **/state/

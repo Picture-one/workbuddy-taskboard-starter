@@ -112,6 +112,15 @@ python workbuddy-taskboard-starter\references\setup\install.py
 
 ## 日常使用
 
+> 📖 **完整使用说明（建议先读）**：[`references/usage-guide.md`](workbuddy-taskboard-starter/references/usage-guide.md)
+> —— 讲的是**怎么用它提高科研效率**：优点与边界、任务粒度、每日节奏、邮件指令、
+> 以及怎么让 agent 替你管任务。
+>
+> 同目录另有一份**单文件 HTML 版** `usage-guide.html`（自包含、可离线打开、可直接打印成 PDF）。
+> ⚠️ GitHub 不渲染 HTML —— **点开后选「Download raw file」，再双击用浏览器打开**。
+>
+> 下面只是命令层面的速查。
+
 看板目录（`~\.workbuddy\apps\dashi-taskboard\`）下四个命令：
 
 | 命令 | 作用 |
@@ -203,6 +212,8 @@ workbuddy-taskboard-starter/
 └── workbuddy-taskboard-starter/
     ├── SKILL.md              ← WorkBuddy 读取的入口
     └── references/
+        ├── usage-guide.md    ← ★ 使用说明（怎么用这个看板干活）
+        ├── usage-guide.html  ← ★ 同上的单文件 HTML 版（下载后双击打开 / 打印 PDF）
         ├── setup/            ← 安装器（install.py / render.py / scan-secrets.py + 模板）
         ├── remote-access.md  ← 手机 / 外网访问
         ├── autostart.md      ← 开机自启与判定方法

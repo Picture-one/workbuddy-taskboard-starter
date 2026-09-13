@@ -1,13 +1,14 @@
 ---
 name: workbuddy-taskboard-starter
 version: "1.0.0"
-description: One-command installer and operations guide for a local-first Taskboard (upstream chuspeeism/dashi-taskboard) plus an optional IMAP/SMTP mail bridge, tailored for WorkBuddy on Windows. Use when the user pastes the workbuddy-taskboard-starter repo link and asks to install the task board, enable logon autostart, expose it to a phone over Tailscale, or wire up the mail bridge.
+description: One-command installer and operations guide for a local-first Taskboard (upstream chuspeeism/dashi-taskboard) plus an optional IMAP/SMTP mail bridge, tailored for WorkBuddy on Windows. Use when the user pastes the workbuddy-taskboard-starter repo link and asks to install the task board, enable logon autostart, expose it to a phone over Tailscale, wire up the mail bridge, or asks how to use the board day to day for research or work (see references/usage-guide.md).
 read_when:
   - 用户给出 workbuddy-taskboard-starter 仓库链接并要求安装任务面板
   - 要求在本机搭建任务看板 / taskboard / 任务面板并配置开机自启
   - 要求让手机或外网访问本机任务面板（Tailscale / tailnet / 内网穿透）
   - 要求配置邮件双向桥（回复邮件即回写看板 / QQ 邮箱 IMAP）
   - 需要运行或解读 selfcheck-taskboard.py 的自检结论与退出码
+  - 用户问「日常怎么用这个看板 / 怎么用它提高效率 / 任务该拆到什么粒度」→ 读 references/usage-guide.md
 agent_created: true
 ---
 

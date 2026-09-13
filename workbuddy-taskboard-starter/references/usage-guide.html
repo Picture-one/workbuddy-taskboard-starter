@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>任务面板使用说明</title>
+<meta name="description" content="面向科研工作的日常操作手册 · 通用版（示例已脱敏）">
+<style>
+:root{
+  --ink:#1c2024; --ink-soft:#4a5259; --ink-faint:#6d7680;
+  --line:#e3e7ea; --line-strong:#c9d0d6;
+  --bg:#ffffff; --bg-soft:#f7f9fa; --bg-code:#f4f6f8;
+  --accent:#0f6fbf; --accent-soft:#e8f2fb;
+  --s-backlog:#7a8288; --s-todo:#1f6fd0; --s-progress:#b8860b;
+  --s-review:#7a4fbf; --s-blocked:#c0392b; --s-done:#1f7a4d; --s-canceled:#9aa1a7;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",
+         "Hiragino Sans GB",sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth; scroll-padding-top:64px}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:var(--sans); font-size:15.5px; line-height:1.75;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:940px; margin:0 auto; padding:0 26px 90px}
+
+/* ---------- 顶部导航 ---------- */
+.topbar{
+  position:sticky; top:0; z-index:50;
+  background:rgba(255,255,255,.94); backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line);
+}
+.topbar-inner{
+  max-width:940px; margin:0 auto; padding:9px 26px;
+  display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+}
+.topbar .brand{
+  font-weight:700; font-size:13.5px; color:var(--ink);
+  white-space:nowrap; letter-spacing:.2px;
+}
+.topbar nav{display:flex; gap:3px; flex-wrap:wrap}
+.topbar nav a{
+  font-size:12.5px; color:var(--ink-soft); text-decoration:none;
+  padding:3px 8px; border-radius:5px; white-space:nowrap;
+}
+.topbar nav a:hover{background:var(--accent-soft); color:var(--accent)}
+
+/* ---------- 页头 ---------- */
+header.hero{padding:52px 0 26px; border-bottom:2px solid var(--ink)}
+header.hero h1{
+  font-size:33px; line-height:1.25; margin:0 0 12px;
+  letter-spacing:-.4px; font-weight:800;
+}
+.hero-sub{color:var(--ink-soft); font-size:15px; margin:0 0 4px}
+.hero-meta{color:var(--ink-faint); font-size:12.5px; margin:0}
+
+/* ---------- 数字卡 ---------- */
+.stat-row{
+  display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin:26px 0 8px;
+}
+.stat{
+  border:1px solid var(--line); border-radius:10px; padding:16px 18px;
+  background:var(--bg-soft);
+}
+.stat-num{
+  display:block; font-size:30px; font-weight:800; line-height:1.1;
+  color:var(--accent); letter-spacing:-1px;
+}
+.stat-label{display:block; font-weight:600; font-size:13px; margin-top:2px}
+.stat-note{display:block; color:var(--ink-faint); font-size:11.5px; margin-top:6px; line-height:1.5}
+
+/* ---------- 正文 ---------- */
+h2{
+  font-size:22px; margin:52px 0 16px; padding-top:8px;
+  border-top:1px solid var(--line); letter-spacing:-.2px;
+}
+h2:first-of-type{border-top:none}
+h3{font-size:17px; margin:30px 0 10px; color:var(--ink)}
+h4{font-size:15px; margin:22px 0 8px; color:var(--ink-soft)}
+p{margin:12px 0}
+a{color:var(--accent)}
+strong{font-weight:650}
+hr{border:none; border-top:1px solid var(--line); margin:36px 0}
+ul,ol{padding-left:24px; margin:12px 0}
+li{margin:5px 0}
+
+/* ---------- 表格 ---------- */
+table{
+  border-collapse:collapse; width:100%; margin:18px 0; font-size:14px;
+  border:1px solid var(--line-strong);
+}
+caption{caption-side:top; text-align:left; font-size:12.5px; color:var(--ink-faint); padding-bottom:6px}
+thead th{
+  background:var(--bg-code); text-align:left; font-weight:650; font-size:13px;
+  padding:10px 12px; border-bottom:1px solid var(--line-strong);
+  border-right:1px solid var(--line);
+}
+thead th:last-child{border-right:none}
+tbody td{
+  padding:9px 12px; border-bottom:1px solid var(--line);
+  border-right:1px solid var(--line); vertical-align:top; line-height:1.65;
+}
+tbody td:last-child{border-right:none}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:nth-child(even){background:#fbfcfd}
+
+/* ---------- 代码 ---------- */
+code{
+  font-family:var(--mono); font-size:.875em; background:var(--bg-code);
+  padding:1.5px 5px; border-radius:4px; color:#b0355a;
+  word-break:break-word;
+}
+pre{
+  background:var(--bg-code); border-left:3px solid var(--line-strong);
+  border-radius:0 7px 7px 0; padding:14px 16px; overflow-x:auto;
+  margin:16px 0; font-size:13px; line-height:1.6;
+}
+pre code{
+  background:none; padding:0; color:var(--ink); font-size:13px;
+  white-space:pre; word-break:normal;
+}
+
+/* ---------- 引用块 ---------- */
+blockquote{
+  margin:16px 0; padding:12px 18px; border-left:3px solid var(--accent);
+  background:var(--accent-soft); border-radius:0 7px 7px 0;
+  color:var(--ink-soft);
+}
+blockquote p{margin:6px 0}
+blockquote p:first-child{margin-top:0}
+blockquote p:last-child{margin-bottom:0}
+
+/* ---------- 状态色片（**必须带文字**，黑白打印才读得出） ---------- */
+.chip{
+  display:inline-block; font-family:var(--mono); font-size:12px; font-weight:600;
+  padding:2px 8px; border-radius:20px; border:1px solid;
+  background:#fff; white-space:nowrap;
+}
+.chip-backlog{color:var(--s-backlog); border-color:var(--s-backlog)}
+.chip-todo{color:var(--s-todo); border-color:var(--s-todo)}
+.chip-in_progress{color:var(--s-progress); border-color:var(--s-progress)}
+.chip-in_review{color:var(--s-review); border-color:var(--s-review)}
+.chip-blocked{color:var(--s-blocked); border-color:var(--s-blocked)}
+.chip-done{color:var(--s-done); border-color:var(--s-done)}
+.chip-canceled{color:var(--s-canceled); border-color:var(--s-canceled)}
+
+/* ---------- 页脚 ---------- */
+footer{
+  margin-top:56px; padding-top:18px; border-top:1px solid var(--line);
+  color:var(--ink-faint); font-size:12.5px;
+}
+
+/* ---------- 打印 ---------- */
+@media print{
+  :root{--bg:#fff}
+  .topbar,.noprint{display:none !important}
+  .wrap{max-width:none; padding:0}
+  @page{size:A4; margin:14mm}
+  body{font-size:10.5pt; line-height:1.5}
+  header.hero{padding-top:0; border-bottom-width:1.5pt}
+  header.hero h1{font-size:20pt}
+  h2{font-size:13pt; margin-top:16pt; break-before:page}
+  h2:first-of-type{break-before:auto}
+  h3{font-size:11.5pt; margin-top:11pt}
+  a{color:var(--ink); text-decoration:none}
+  a[href^="http"]::after{content:" (" attr(href) ")"; font-size:8.5pt; color:#555}
+  table{font-size:9pt; break-inside:auto}
+  tr,blockquote,.stat{break-inside:avoid}
+  thead{display:table-header-group}
+  pre{font-size:8.5pt; break-inside:avoid; background:#f5f5f5}
+  .stat-row{grid-template-columns:repeat(3,1fr); gap:8pt}
+  .chip{background:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-inner">
+    <span class="brand">任务面板使用说明</span>
+    <nav><a href="#一优点速览它和同类工具差在哪">优点速览：它和同类工具差在哪</a><a href="#二边界它做不到什么">边界：它做不到什么</a><a href="#三它适合什么科研工作">它适合什么科研工作</a><a href="#四心智模型任务该怎么摆">心智模型：任务该怎么摆</a><a href="#五每日节奏早-5-分--白天--晚-2-分">每日节奏：早 5 分 / 白天 / 晚 2 分</a><a href="#六三条科研场景模板">三条科研场景模板</a><a href="#七让-agent-替你管任务">让 agent 替你管任务</a><a href="#八进阶ui-冷知识与常用命令">进阶：UI 冷知识与常用命令</a><a href="#九附录指令卡与速查表">附录：指令卡与速查表</a></nav>
+  </div>
+</div>
+<div class="wrap">
+<header class="hero">
+  <h1>任务面板使用说明</h1>
+  <p class="hero-sub">面向科研工作的日常操作手册 · 通用版（示例已脱敏）</p>
+  <p class="hero-meta">生成自 <code>usage-guide.md</code> · 可离线打开 · 可直接打印为 PDF</p>
+</header>
+<blockquote>
+<p><strong>面向科研工作的日常操作手册</strong> · 不含安装步骤（假设服务已经跑起来）
+适用于本工具包装好的「本机任务看板 + 邮件双向桥」组合</p>
+</blockquote>
+<p><strong>一句话</strong>：把「脑子里记着的待办」变成<strong>能跨会话、跨设备、可验收的任务账本</strong> ——
+早上收到一封清单，白天干活，完成时回一封邮件就勾掉。不需要打开电脑上的任何界面。</p>
+<div class="stat-row noprint"><div class="stat"><span class="stat-num">7</span><span class="stat-label">个状态</span><span class="stat-note">从「记下来」到「已验收」，每步含义固定</span></div><div class="stat"><span class="stat-num">5</span><span class="stat-label">个视图</span><span class="stat-note">仪表盘 / 看板 / 列表 / 时间线 / 项目说明</span></div><div class="stat"><span class="stat-num">0</span><span class="stat-label">云依赖</span><span class="stat-note">数据在本机 SQLite，断网可用、不需账号</span></div></div>
+
+<h2 id="目录">目录</h2>
+<ol>
+<li><a href="#一优点速览它和同类工具差在哪">优点速览：它和同类工具差在哪</a></li>
+<li><a href="#二边界它做不到什么">边界：它做不到什么</a></li>
+<li><a href="#三它适合什么科研工作">它适合什么科研工作</a></li>
+<li><a href="#四心智模型任务该怎么摆">心智模型：任务该怎么摆</a></li>
+<li><a href="#五每日节奏早-5-分--白天--晚-2-分">每日节奏：早 5 分 / 白天 / 晚 2 分</a></li>
+<li><a href="#六三条科研场景模板">三条科研场景模板</a></li>
+<li><a href="#七让-agent-替你管任务">让 agent 替你管任务</a></li>
+<li><a href="#八进阶ui-冷知识与常用命令">进阶：UI 冷知识与常用命令</a></li>
+<li><a href="#九附录指令卡与速查表">附录：指令卡与速查表</a></li>
+</ol>
+<hr />
+<h2 id="一优点速览它和同类工具差在哪">一、优点速览：它和同类工具差在哪</h2>
+<p>同类工具很多，但<strong>为「agent 干活」而不是「人看板」设计</strong>的很少。下表把差别摊开，
+并标注每项能力的<strong>来源</strong> —— 「本工具包扩展」是随本仓库一起装的，不是上游自带。
+最后一列给出现场验证方式，<strong>优点必须能被证伪，否则就是营销</strong>。</p>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>来源</th>
+<th>说明</th>
+<th>怎么现场验证</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>跨会话持久化</strong></td>
+<td>上游</td>
+<td>agent 的内置任务列表会话一结束就消失；这里存在本机 SQLite，下周还在</td>
+<td>重启会话后 <code>issue list</code> 仍能读到</td>
+</tr>
+<tr>
+<td><strong>工作目录自动归属</strong></td>
+<td>上游</td>
+<td>在哪个目录干活，任务就记到哪个项目（按最长路径匹配），不用每次手选</td>
+<td>在不同目录跑 <code>context current</code>，看 project 变化</td>
+</tr>
+<tr>
+<td><strong>并发安全的任务认领</strong></td>
+<td>上游</td>
+<td>每条任务带版本号，写入必须带 <code>--if-version</code>；冲突返回退出码 <code>5</code>。两个 agent 不会抢同一条、也不会互相覆盖</td>
+<td>用过期版本号写入，观察退出码 <code>5</code></td>
+</tr>
+<tr>
+<td><strong>「干完等人验收」是内置状态</strong></td>
+<td>上游</td>
+<td><code>in_review</code> 专为「做完了、等你确认」而设计；且规则明确 <strong>agent 不得自己标 <code>done</code></strong></td>
+<td>看状态选项里有 <code>in_review</code>；agent 会停下来问你</td>
+</tr>
+<tr>
+<td><strong>手机回邮件即回写</strong></td>
+<td><strong>本工具包扩展</strong></td>
+<td>在微信「服务通知」里回复那封清单邮件，任务就勾掉了。不需要装 App、不需要公网入口、成本 ¥0</td>
+<td>跑 <code>send-test.cmd</code> 再回一封 <code>ping</code></td>
+</tr>
+<tr>
+<td><strong>多视图 + 甘特时间线</strong></td>
+<td>上游</td>
+<td>仪表盘 / 议题看板 / 列表 / <strong>时间线</strong> / 项目说明 五种视图；时间线支持日·周·月、隐藏已完成、跳到今天</td>
+<td>打开时间线视图切「月」</td>
+</tr>
+<tr>
+<td><strong>任务挂在分支 / worktree 上</strong></td>
+<td>上游</td>
+<td>一条任务可绑定一个 Git 分支或一个 worktree，干完自动关联</td>
+<td>详情页「开发上下文」字段</td>
+</tr>
+<tr>
+<td><strong>全 JSON、可脚本化</strong></td>
+<td>上游</td>
+<td>CLI 每条命令输出一个带 <code>schemaVersion</code> 的 JSON；退出码语义化（0/2/3/4/5）</td>
+<td><code>issue list --json</code></td>
+</tr>
+<tr>
+<td><strong>数据在本机、无账号</strong></td>
+<td>上游</td>
+<td>SQLite 单文件，断网可用，不注册、不遥测</td>
+<td>断网后刷新页面仍正常</td>
+</tr>
+<tr>
+<td><strong>开机自启 + 一键只读自检</strong></td>
+<td><strong>本工具包扩展</strong></td>
+<td>登录自动起服务；一条命令做十几项体检并给退出码</td>
+<td>双击 <code>selfcheck-taskboard.cmd</code></td>
+</tr>
+<tr>
+<td><strong>手机 / 外网访问</strong></td>
+<td><strong>本工具包扩展</strong></td>
+<td>经 Tailscale 反代出 HTTPS，<strong>服务本身始终只绑回环</strong>，绝不暴露到局域网</td>
+<td>用手机打开自己的 <code>https://&lt;机器名&gt;.&lt;tailnet&gt;.ts.net</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>该不该用它</strong>，三条判断：</p>
+<ol>
+<li>这件事<strong>明天还会记得</strong>吗？会 → 记进去。不会（顺手改个字）→ 别记。</li>
+<li>这件事<strong>需要你最后拍板</strong>吗？需要 → 用 <code>in_review</code>，让 agent 停下来等你。</li>
+<li>这件事<strong>要跨好几天</strong>吗？要 → 一定要记，因为你的记忆会断，看板不会。</li>
+</ol>
+<hr />
+<h2 id="二边界它做不到什么">二、边界：它做不到什么</h2>
+<p>诚实清单。缺了这张表，上面的优点就是营销。</p>
+<table>
+<thead>
+<tr>
+<th>做不到</th>
+<th>原因 / 现状</th>
+<th>变通</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>没有依赖关系可视化图</strong></td>
+<td>上游只存关系数据，甘特图里只能 hover 高亮</td>
+<td>用 <code>issue tree</code> 看层级；关系在详情页右栏看</td>
+</tr>
+<tr>
+<td><strong>没有「分配给我」视图</strong></td>
+<td>无 assignee 聚合页，负责人只能在详情页改</td>
+<td>用筛选（<code>F</code>）+ 搜索</td>
+</tr>
+<tr>
+<td><strong>不能批量选择操作</strong></td>
+<td>无多选</td>
+<td>逐条拖拽，或走 CLI 脚本批量改</td>
+</tr>
+<tr>
+<td><strong>筛选维度有限</strong></td>
+<td>只有状态 / 优先级 / 标签；<strong>没有日期、没有负责人</strong>筛选</td>
+<td>URL 参数可拼 <code>status/priority/label/linked/content/project/issue</code></td>
+</tr>
+<tr>
+<td><strong>无云端同步</strong></td>
+<td>本地优先；多人协作要自己部署 Cloudflare Worker + D1</td>
+<td>单机够用；多设备靠 Tailscale 访问同一个服务</td>
+</tr>
+<tr>
+<td><strong>AI 相关功能不可用</strong></td>
+<td>本工具包把服务装到了非 Codex 宿主上，没有 Codex 运行时 → AI 聊天、AI 项目摘要、会话进度、侧边栏注入、托盘启动器均不可用</td>
+<td>不受影响：任务/评论/附件/关系读写全部正常</td>
+</tr>
+<tr>
+<td><strong>演示项目可能删不掉</strong></td>
+<td>服务端无 PATCH 路由，且删除对非 <code>temp-</code> 前缀的项目抛 403；含任务也算门槛</td>
+<td>它对功能零影响，<strong>保持原样即可</strong></td>
+</tr>
+</tbody>
+</table>
+<p>⚠️ <strong>一个必须记住的前提</strong>：<code>backlog</code> <strong>不等于「可以做」</strong>。<code>backlog</code> 是「还没批准执行」，
+只有你明确授权了，agent 才会动它。这条是上游工作流协议的硬规则。</p>
+<hr />
+<h2 id="三它适合什么科研工作">三、它适合什么科研工作</h2>
+<table>
+<thead>
+<tr>
+<th>科研场景</th>
+<th>怎么用这个面板</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>计算 / 建模类</strong>（跑脚本、调参、做评估）</td>
+<td>把「跑通脚本」升级成<strong>可验收的产出</strong>：不是「做实验」，而是「N 种算法各自的指标表 + 交叉验证设置说明」</td>
+</tr>
+<tr>
+<td><strong>论文写作类</strong>（前言/方法/结果/讨论）</td>
+<td>用<strong>父子结构</strong>：父议题 = 论文，子任务 = 每个章节/每张图/每次分析</td>
+</tr>
+<tr>
+<td><strong>结果整理类</strong>（显著性表、汇总图）</td>
+<td>把<strong>验收标准写进任务名</strong>，例如「整理 FDR 显著与名义显著的结果表」——这比「整理结果」清楚得多</td>
+</tr>
+<tr>
+<td><strong>文献阅读类</strong>（本地 Wiki、批量精读）</td>
+<td>用标签区分阶段；论文阅读适合「当天可闭环」的小粒度，别攒成一个大任务</td>
+</tr>
+</tbody>
+</table>
+<p><strong>一个通用建议</strong>：任务粒度<strong>当天可闭环</strong>是最省心的起点。
+等你习惯了，再补上<strong>父子结构</strong>（把散落的子任务挂到主线父议题下），
+这样时间线视图才能真正看出「这条主线推进到哪了」。</p>
+<hr />
+<h2 id="四心智模型任务该怎么摆">四、心智模型：任务该怎么摆</h2>
+<h3 id="41-七个状态各有明确含义">4.1 七个状态，各有明确含义</h3>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>含义</th>
+<th>谁能改</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="chip chip-backlog">backlog</span></td>
+<td><strong>还没批准执行</strong>。它只是「记下来」，不是「可以做」</td>
+<td>只有你授权后才进 <code>todo</code></td>
+</tr>
+<tr>
+<td><span class="chip chip-todo">todo</span></td>
+<td>已批准，等人认领</td>
+<td>agent 可以认领</td>
+</tr>
+<tr>
+<td><span class="chip chip-in_progress">in_progress</span></td>
+<td>正在做</td>
+<td>认领者</td>
+</tr>
+<tr>
+<td><span class="chip chip-in_review">in_review</span></td>
+<td><strong>做完了，等你验收</strong> —— 这是给你留的检查点</td>
+<td>agent 干完自动移到这里</td>
+</tr>
+<tr>
+<td><span class="chip chip-blocked">blocked</span></td>
+<td>卡住了，等外部条件</td>
+<td>认领者，需写清阻塞源</td>
+</tr>
+<tr>
+<td><span class="chip chip-done">done</span></td>
+<td>已验收完成</td>
+<td><strong>只有你确认后</strong>才能到这里</td>
+</tr>
+<tr>
+<td><span class="chip chip-canceled">canceled</span></td>
+<td>决定不做了</td>
+<td>保留记录，不删除</td>
+</tr>
+</tbody>
+</table>
+<p>流转关系：</p>
+<pre><code class="language-text">backlog ──你授权──▶ todo ──认领──▶ in_progress ──干完──▶ in_review ──你验收──▶ done
+                                      │                      │
+                                      ├──▶ blocked           └──▶ （打回 → in_progress）
+                                      └──▶ canceled
+</code></pre>
+<blockquote>
+<p><strong>两个关键点</strong>：① <code>in_review</code> 是<strong>给你</strong>的，不是给 agent 的 —— 看到它就该去验收；
+② agent <strong>不得</strong>自己把任务标成 <code>done</code>，必须你说「这个可以了」。这是制度，不是礼貌。</p>
+</blockquote>
+<h3 id="42-任务粒度一条任务--一次可验收产出">4.2 任务粒度：一条任务 = 一次可验收产出</h3>
+<p><strong>判据</strong>：一条任务应该能在<strong>一个 1–2 小时的专注块</strong>内推进到「能判定成不成」的状态。</p>
+<table>
+<thead>
+<tr>
+<th>写法</th>
+<th>评价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>❌ <code>做实验</code></td>
+<td>是动词，没有完成标准</td>
+</tr>
+<tr>
+<td>❌ <code>推进论文</code></td>
+<td>太大，永远做不完，会一直挂在 <code>in_progress</code></td>
+</tr>
+<tr>
+<td>✅ <code>跑通 N 种算法的交叉验证脚本</code></td>
+<td>有明确产出（脚本能跑通），可判定</td>
+</tr>
+<tr>
+<td>✅ <code>整理 FDR 显著与名义显著的结果表</code></td>
+<td>产出是「一张表」，验收标准写进了标题</td>
+</tr>
+<tr>
+<td>✅ <code>补写知识图谱方法学章节</code></td>
+<td>产出是「一个章节」</td>
+</tr>
+</tbody>
+</table>
+<p>超出 1–2 小时的，<strong>拆父子</strong>，别硬塞。</p>
+<h3 id="43-三级结构父议题--子任务--评论">4.3 三级结构：父议题 / 子任务 / 评论</h3>
+<pre><code class="language-text">父议题（主线）        论文 A
+├── 子任务            补写方法学章节              ← 可验收产出
+├── 子任务            整理论文 Figure 2 的汇总表
+└── 子任务            回复审稿人第 3 条意见
+    └── 评论          「今天试了 X，跑出来不对，原因是 Y」  ← 过程记录，别开新任务
+</code></pre>
+<p><strong>最常见的误用</strong>：把「过程中的每一步」都开成任务。正确做法是——
+<strong>状态变化才动任务，过程写评论</strong>。</p>
+<h3 id="44-标签少而稳定">4.4 标签：少而稳定</h3>
+<p>标签的价值在于<strong>长期稳定</strong>，不在于多。建议固定一组：</p>
+<table>
+<thead>
+<tr>
+<th>标签</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>phase-1</code> … <code>phase-6</code></td>
+<td>论文/实验的推进阶段。<strong>这是最有价值的一组</strong> —— 时间线视图配合它能看出节奏</td>
+</tr>
+<tr>
+<td><code>for-agent</code></td>
+<td>标记这条是交给 agent 干的</td>
+</tr>
+<tr>
+<td><code>hold</code></td>
+<td>暂时挂起</td>
+</tr>
+<tr>
+<td><code>缺陷</code> / <code>特性</code> / <code>改进</code></td>
+<td>留给工具链本身的问题</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="五每日节奏早-5-分--白天--晚-2-分">五、每日节奏：早 5 分 / 白天 / 晚 2 分</h2>
+<h3 id="早上5-分钟">早上（5 分钟）</h3>
+<ol>
+<li>微信 → <strong>服务通知</strong>（不是聊天列表）→ 那封带 <code>[任务面板]</code> 的清单邮件。</li>
+<li>挑 <strong>≤ 3 条</strong>进 <code>in_progress</code>。<strong>这是你的 WIP 上限</strong> —— 同时开五条，等于五条都推不动。</li>
+<li>如果昨晚有回复没生效，跑 <code>poll-once.cmd</code> 补一次。</li>
+</ol>
+<h3 id="白天">白天</h3>
+<ul>
+<li><strong>加任务</strong>：想到就加，三个入口任选（见下表）。</li>
+<li><strong>只在状态变化时动任务</strong>；过程写<strong>评论</strong>，不要开新任务。</li>
+<li><strong>不做完不开新的</strong> —— WIP 满了就先把手上这条推到 <code>in_review</code>。</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>入口</th>
+<th>地址 / 方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>本机浏览器</td>
+<td><code>http://127.0.0.1:47823</code></td>
+</tr>
+<tr>
+<td>手机</td>
+<td>自己的 <code>https://&lt;机器名&gt;.&lt;tailnet&gt;.ts.net</code></td>
+</tr>
+<tr>
+<td>直接跟 agent 说</td>
+<td>「把 XX 记到 <code>&lt;你的项目 id&gt;</code>」</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>手机走域名时，<code>/api/local/*</code> 会返回 <strong>409</strong> —— 这是设计如此（环回专属端点不对外），<strong>不是故障</strong>。</p>
+</blockquote>
+<h3 id="晚上2-分钟">晚上（2 分钟）</h3>
+<ol>
+<li>回复那封清单邮件：<code>c1 c2</code> 或 <code>1和2完成</code> —— 勾掉今天完成的。</li>
+<li>写一行 <code>复盘 今天……</code> —— 会存成 <code>state\review-日期.md</code>。</li>
+<li>有卡住的，移到 <code>blocked</code> 并<strong>写清在等什么</strong>（等数据、等审稿意见、等仪器）。</li>
+</ol>
+<h3 id="周末10-分钟">周末（10 分钟）</h3>
+<ul>
+<li>打开<strong>时间线视图</strong>，切「月」，配合 <code>phase-*</code> 标签看主线的推进节奏。</li>
+<li>检查有没有长期挂在 <code>in_progress</code> 的任务 —— 有的话要么拆小，要么降回 <code>todo</code>。</li>
+</ul>
+<hr />
+<h2 id="六三条科研场景模板">六、三条科研场景模板</h2>
+<h3 id="61-写作线论文--章节">6.1 写作线（论文 / 章节）</h3>
+<p>粒度：<strong>一个可交付段落或一张图 = 一条任务</strong>。</p>
+<pre><code class="language-text">父议题：论文 A
+├── 补写方法学章节                ← in_review 后你读一遍再 done
+├── 整理 Figure 2 的汇总表
+└── 写 Discussion 第 2 段
+</code></pre>
+<p>要点：写作任务的 <code>in_review</code> 特别有用 —— agent 写完你看一眼，不满意就<strong>打回 <code>in_progress</code></strong> 并写评论说明哪里要改，比重新口述一遍更省事。</p>
+<h3 id="62-实验线--分析线">6.2 实验线 / 分析线</h3>
+<p>粒度：<strong>一次可交付的计算或一次实验运行 = 一条任务</strong>。</p>
+<pre><code class="language-text">父议题：主线 A
+├── 跑通 N 种算法的交叉验证脚本
+├── 输出各算法指标对比表
+└── 排查某算法在特定划分下的异常
+</code></pre>
+<p>要点：
+- 用 <code>--git-branch</code> 或 <code>--worktree-path</code> 把任务<strong>绑到分支</strong>，干完自动关联，不用事后回忆「那版代码在哪」。
+- 结果表、图这类<strong>交付物直接作为附件上传</strong>（上限 25 MB），比在聊天里传来传去好找。</p>
+<h3 id="63-投稿线--周期线">6.3 投稿线 / 周期线</h3>
+<p>粒度：<strong>一次投稿动作 = 一条任务</strong>，用 <code>due-date</code> 记 deadline。</p>
+<pre><code class="language-text">├── 提交稿件到目标期刊                 due-date: 2026-10-01
+├── 整理审稿人要求的补充结果表
+└── 每周组会材料                       recurrence: 每 1 周
+</code></pre>
+<p>要点：
+- <strong><code>recurrence</code> 记周期性事项</strong> —— 组会材料、周报这类，设一次就不用再记。
+- 投稿前的集中火力期，适合把一批任务一起推进 <code>in_review</code>，一次性验收。</p>
+<hr />
+<h2 id="七让-agent-替你管任务">七、让 agent 替你管任务</h2>
+<p>本工具包会一并安装 <code>manage-taskboard</code> skill，agent 可以直接读写看板。
+<strong>这是效率杠杆最大的一节</strong> —— 你不用自己敲命令。</p>
+<h3 id="71-怎么开口">7.1 怎么开口</h3>
+<table>
+<thead>
+<tr>
+<th>你说</th>
+<th>agent 会做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>「把 XX 记到 <code>&lt;项目 id&gt;</code>，优先级 high」</td>
+<td>创建任务</td>
+</tr>
+<tr>
+<td>「现在有哪些没做的？」</td>
+<td>列出 <code>todo</code></td>
+</tr>
+<tr>
+<td>「这条我来做，标记开始」</td>
+<td>认领：<code>todo</code> → <code>in_progress</code>（含完整绑定）</td>
+</tr>
+<tr>
+<td>「这条干完了，写个评论」</td>
+<td>追加评论</td>
+</tr>
+<tr>
+<td>「这条可以了」</td>
+<td><code>in_review</code> → <code>done</code>（<strong>只有你说了才可以</strong>）</td>
+</tr>
+<tr>
+<td>「XX 卡住了，在等数据」</td>
+<td>移到 <code>blocked</code> 并写清阻塞源</td>
+</tr>
+</tbody>
+</table>
+<h3 id="72-非-codex-宿主下的特有约束必须记住">7.2 非 Codex 宿主下的特有约束（必须记住）</h3>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>情况</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>写操作必须显式传 <code>--thread-id</code></strong></td>
+<td>非 Codex 宿主没有 <code>CODEX_THREAD_ID</code> 环境变量，所有写操作都要带上会话 ID，否则报 <code>Codex conversation attribution requires --thread-id</code></td>
+</tr>
+<tr>
+<td><strong>绑定参数必须成对</strong></td>
+<td><code>--binding-codex-project-kind local</code> <strong>必须配</strong> <code>--binding-codex-host-id local</code>；写成别的值会直接失败</td>
+</tr>
+<tr>
+<td><strong>只传 <code>--thread-id</code> 会留 legacy 绑定</strong></td>
+<td>认领/继续任务时应补齐 5 个 <code>--binding-*</code>，补齐后旧的 legacy 字段会被清空</td>
+</tr>
+<tr>
+<td><strong>部分功能不可用</strong></td>
+<td>AI 聊天、AI 项目摘要、Codex 会话进度、侧边栏注入、托盘启动器 —— 因为没有 Codex 运行时。<strong>核心读写不受影响</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="73-两道门禁这是它真正的价值">7.3 两道门禁（这是它真正的价值）</h3>
+<ol>
+<li><strong><code>backlog</code> 门禁</strong>：<code>backlog</code> 里的任务，agent <strong>不会</strong>自己认领 —— 它只是你的备忘录区。</li>
+<li><strong><code>done</code> 门禁</strong>：agent 干完只能移到 <code>in_review</code>，<strong>永远不会自己标 <code>done</code></strong>。</li>
+</ol>
+<p>这两条把「agent 自称做完」和「真的做完」彻底分开了。你只需要盯 <code>in_review</code> 这一列。</p>
+<hr />
+<h2 id="八进阶ui-冷知识与常用命令">八、进阶：UI 冷知识与常用命令</h2>
+<h3 id="81-五个可能还不知道的界面功能">8.1 五个可能还不知道的界面功能</h3>
+<ol>
+<li><strong>时间线（甘特）视图</strong> —— 切「月」看主线节奏，可隐藏已完成，有「今天」按钮。</li>
+<li><strong>拖拽改状态</strong> —— 看板上直接拖卡片换列，比开详情页改状态快得多。<code>Ctrl+Z</code> 可撤销。</li>
+<li><strong>快捷键</strong> —— <code>C</code> 新建、<code>/</code> 搜索、<code>F</code> 筛选、<code>Esc</code> 关闭、详情页 <code>R</code> 聚焦评论、<code>Ctrl+Enter</code> 提交评论。</li>
+<li><strong>附件粘贴上传</strong> —— 详情页直接粘贴截图（上限 25 MB）。图片用 <code>inline</code> 会嵌在正文里，用 <code>attachment</code> 则进附件列表。</li>
+<li><strong>URL 可分享</strong> —— 筛选状态后地址栏会带参数（<code>status</code>/<code>priority</code>/<code>label</code>/<code>project</code> 等），存成书签就是「保存的视图」。</li>
+</ol>
+<blockquote>
+<p>Markdown 支持表格、任务列表；<code>mermaid</code> 代码块会渲染成<strong>只读</strong>流程图（失败时回退显示源码）。</p>
+</blockquote>
+<h3 id="82-最常用的六条命令">8.2 最常用的六条命令</h3>
+<pre><code class="language-bash"># 1. 今天有什么（列出未完成）
+taskctl issue list --status todo --json
+
+# 2. 含已归档的全量列表（UI 里做不了）
+taskctl issue list --archived all --json
+
+# 3. 看一条任务的层级结构（父/子，UI 里没有树视图）
+taskctl issue tree &lt;PREFIX&gt;-1 --direction descendants --depth 2 --json
+
+# 4. 增量读评论（只取新评论，省上下文 —— 同一条任务反复跟进时非常有用）
+taskctl comment list &lt;PREFIX&gt;-1 --after &lt;上次返回的 nextCursor&gt; --json
+
+# 5. 建任务
+taskctl issue create --project &lt;项目 id&gt; --title &quot;标题&quot; --status todo --priority high --json
+
+# 6. 当前目录归属哪个项目
+taskctl context current --json
+</code></pre>
+<blockquote>
+<p>退出码：<code>0</code> 成功 · <code>2</code> 用法错 · <code>3</code> 服务不可达（先跑 <code>start-taskboard.cmd</code>）· <code>4</code> 响应错误 · <code>5</code> <strong>版本冲突</strong>（读最新版再重试）。</p>
+</blockquote>
+<p><strong>只有命令能做、界面做不了的</strong>：层级树 · 目录映射 · 附件批量导出 ·
+<code>archived</code> 三态筛选 · 评论游标增量读 · 显式 <code>--if-version</code>。</p>
+<blockquote>
+<p><code>taskctl</code> 的具体调用方式（包装脚本位置、固定路径写法）见 <code>local-layout.md</code>。</p>
+</blockquote>
+<hr />
+<h2 id="九附录指令卡与速查表">九、附录：指令卡与速查表</h2>
+<h3 id="91-邮件回复指令卡">9.1 邮件回复指令卡</h3>
+<blockquote>
+<p>⚠️ <strong>必须用邮件客户端的「回复」功能</strong>（这样主题才带 <code>Re:</code>）。<strong>绝不在企业微信群里回复</strong> —— 那是单向通道，收不到任何东西。
+未安装邮件桥时本节可跳过。</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>你写</th>
+<th>效果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>c1 c2</code> / <code>done 1、2</code></td>
+<td>标记第 1、2 项完成</td>
+</tr>
+<tr>
+<td><code>把1、2项标记为已完成</code></td>
+<td>同上（自然语言）</td>
+</tr>
+<tr>
+<td><code>1和2完成</code> / <code>第1项做完了</code></td>
+<td>同上</td>
+</tr>
+<tr>
+<td><code>done &lt;PREFIX&gt;-1</code></td>
+<td>直接用编号标记完成</td>
+</tr>
+<tr>
+<td><code>r1 新的标题</code></td>
+<td>把第 1 项标题换成新内容</td>
+</tr>
+<tr>
+<td><code>+ 补充材料 S2</code></td>
+<td>追加一条新任务</td>
+</tr>
+<tr>
+<td><code>复盘 今天……</code></td>
+<td>写当日复盘</td>
+</tr>
+<tr>
+<td><code>ping</code></td>
+<td>只测链路，不动作</td>
+</tr>
+</tbody>
+</table>
+<p><strong>三条铁律</strong>：</p>
+<ol>
+<li><strong>自然语言只对「标记完成」生效</strong>。改标题（<code>r1</code>）、加任务（<code>+</code>）必须用严格语法 —— 宁可漏执行，也不误执行。</li>
+<li><strong>重复回复是安全的</strong>，会回你「已是完成状态」。</li>
+<li><strong>编号映射会过期</strong> —— 清单邮件被清理后 <code>r1</code> 会报「找不到对应任务」，收到清单后尽快回复。</li>
+</ol>
+<h3 id="92-快捷键卡">9.2 快捷键卡</h3>
+<table>
+<thead>
+<tr>
+<th>键</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>C</code></td>
+<td>新建任务</td>
+</tr>
+<tr>
+<td><code>/</code></td>
+<td>搜索</td>
+</tr>
+<tr>
+<td><code>F</code></td>
+<td>筛选菜单</td>
+</tr>
+<tr>
+<td><code>Esc</code></td>
+<td>关闭弹层</td>
+</tr>
+<tr>
+<td><code>Ctrl+Z</code></td>
+<td>撤销</td>
+</tr>
+<tr>
+<td><code>R</code>（详情页）</td>
+<td>聚焦评论框</td>
+</tr>
+<tr>
+<td><code>Ctrl+Enter</code></td>
+<td>提交评论</td>
+</tr>
+</tbody>
+</table>
+<h3 id="93-状态与优先级速查">9.3 状态与优先级速查</h3>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>一句话</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="chip chip-backlog">backlog</span></td>
+<td>记下来，但<strong>还没批准做</strong></td>
+</tr>
+<tr>
+<td><span class="chip chip-todo">todo</span></td>
+<td>可以做，等人认领</td>
+</tr>
+<tr>
+<td><span class="chip chip-in_progress">in_progress</span></td>
+<td>正在做</td>
+</tr>
+<tr>
+<td><span class="chip chip-in_review">in_review</span></td>
+<td><strong>做完了，等我验收</strong></td>
+</tr>
+<tr>
+<td><span class="chip chip-blocked">blocked</span></td>
+<td>卡住了，在等外部条件</td>
+</tr>
+<tr>
+<td><span class="chip chip-done">done</span></td>
+<td>已验收</td>
+</tr>
+<tr>
+<td><span class="chip chip-canceled">canceled</span></td>
+<td>不做了（保留记录）</td>
+</tr>
+</tbody>
+</table>
+<p>优先级：<code>urgent</code> &gt; <code>high</code> &gt; <code>medium</code> &gt; <code>low</code> &gt; <code>none</code></p>
+<h3 id="94-出问题时">9.4 出问题时</h3>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>selfcheck-taskboard.cmd</code></td>
+<td><strong>出问题先跑它</strong>（只读，十几项体检）</td>
+</tr>
+<tr>
+<td><code>status-taskboard.cmd</code></td>
+<td>服务在不在</td>
+</tr>
+<tr>
+<td><code>stop-taskboard.cmd</code></td>
+<td>停服务</td>
+</tr>
+<tr>
+<td><code>send-daily.cmd</code></td>
+<td>立刻再发一封清单</td>
+</tr>
+<tr>
+<td><code>poll-once.cmd</code></td>
+<td>立刻处理邮件回复</td>
+</tr>
+</tbody>
+</table>
+<p>自检退出码：<code>0</code> 正常 · <code>1</code> 服务不健康 · <code>2</code> 本次登录未执行自启 · <code>3</code> 无法判定 · <code>10</code> 配置或文件问题（优先级最高）。</p>
+<blockquote>
+<p><strong>一个静默失败模式</strong>：如果哪天「邮件照发、微信却毫无提醒」，几乎一定是微信侧的
+<strong>「QQ邮箱提醒」</strong>出了问题（开关被关 / 绑定失效 / 装了 QQ邮箱 App 并开了「仅在客户端提醒」）。
+上行链路是<strong>静默</strong>的，不会有任何报错。详见 <code>mail-bridge.md</code>。</p>
+</blockquote>
+<footer>
+  <p>本页为自包含单文件（无任何外部资源），可离线打开、可直接打印为 PDF。</p>
+  <p>内容由 <code>usage-guide.md</code> 自动生成 —— 要改内容请改 Markdown 后重新构建。</p>
+</footer>
+</div>
+</body>
+</html>

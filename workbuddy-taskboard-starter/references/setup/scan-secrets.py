@@ -10,23 +10,86 @@
 退出码：0 = 零命中（干净）；1 = 有命中（不要提交）。
 
 设计取舍：
-  * **不内置任何真实密钥字面量。** 想「用已知授权码去比对」听起来省事，但那等于
-    把密钥写进一个要公开的脚本里 —— 比原本要防的问题更糟。这里只做**形态匹配**：
-    像不像密钥，而不是等不等于某个已知密钥。
+  * **不内置任何真实值。** 想「用已知授权码去比对」听起来省事，但那等于把密钥写进一个
+    要公开的脚本里 —— 比原本要防的问题更糟。这里只做**形态匹配**：像不像密钥，
+    而不是等不等于某个已知密钥。
+  * **本机私有值一律不落字面量**：用户名/机器名运行时从环境变量推导；项目 id、
+    专用编号前缀、课题关键词从 `scan-secrets.local.json`（已 gitignore）读。
+    取不到就让对应规则退化为「永不匹配」，本文件因此可以公开且无需自我豁免。
   * 每条规则都配一个「放行」条件，专门放过文档里的占位写法
     （`<tailnet>.ts.net`、`你的QQ号@qq.com`、`%USERPROFILE%` …）。
 """
 import argparse
+import json
 import os
 import re
 import sys
 
 SKIP_DIRS = {".git", "node_modules", "dist", "__pycache__", ".venv", ".idea", ".vscode"}
 SKIP_SUFFIXES = (".pyc", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".zip", ".gz", ".woff", ".woff2")
-# 扫描器**自己**必须排除：它的规则定义里必然含 `T2D`、`HENG`、`my-tasks` 这类字面量，
-# 那是「要找什么」的声明，不是泄露。所以本文件无法自证清白，只能显式豁免。
-# 已知取舍：有人往本文件里粘贴真实密钥时不会被抓到。
-SKIP_BASENAMES = {"scan-secrets.py"}
+
+# ---------------------------------------------------------------- 私有字面量
+# ⚠️ **本文件是要公开的**，所以绝不能把「本机真实值」写成字面量 ——
+# 用户名、机器名、tailnet 名、项目 id 一旦写进来，就等于把要防的东西放进了防线里。
+# 两种取法，都让本文件保持干净：
+#
+#   1) 用户名 / 机器名 —— **运行时从环境变量推导**。无需硬编码，换台机器自动生效。
+#   2) 项目 id、课题关键词等推导不出来的 —— 放在同目录的
+#      `scan-secrets.local.json`（已被 .gitignore 排除），形如：
+#          {"literals": ["<项目 id>", "<专用编号前缀>", "<课题关键词>"]}
+#
+# 两者都取不到时，对应规则退化为「永不匹配」；其余形态规则照常工作。
+LOCAL_LITERALS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "scan-secrets.local.json")
+
+NEVER_MATCH = r"(?!)"
+
+
+def _env_value(*names, min_len=3):
+    """按顺序取第一个够长的环境变量值（太短的没有区分度，容易误报）。"""
+    for name in names:
+        raw = (os.environ.get(name) or "").strip()
+        if len(raw) >= min_len:
+            return raw
+    return ""
+
+
+CUR_USER = _env_value("USERNAME", "USER", "LOGNAME")
+CUR_HOST = _env_value("COMPUTERNAME", "HOSTNAME")
+
+
+def _load_local_literals():
+    """从（已 gitignore 的）本地文件读私有字面量；读不到就返回空列表。"""
+    if not os.path.isfile(LOCAL_LITERALS_FILE):
+        return []
+    try:
+        with open(LOCAL_LITERALS_FILE, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception:
+        return []
+    values = data.get("literals") if isinstance(data, dict) else data
+    if not isinstance(values, list):
+        return []
+    return [str(v) for v in values if str(v).strip()]
+
+
+LOCAL_LITERALS = _load_local_literals()
+
+
+def _literal_alt(values):
+    """把字面量拼成一个 alternation。
+
+    首尾是「词字符」的加 `\\b`：这样 `\\babc\\b` 不会误伤 `abcdef` 或 `xabc`。
+    """
+    if not values:
+        return NEVER_MATCH
+    parts = []
+    for value in values:
+        escaped = re.escape(value)
+        if re.match(r"\w", value[0]) and re.search(r"\w$", value):
+            escaped = r"\b" + escaped + r"\b"
+        parts.append(escaped)
+    return "|".join(parts)
 
 # (名称, 正则, 放行正则 或 None)
 RULES = [
@@ -54,8 +117,9 @@ RULES = [
      re.compile(r"[a-z0-9][a-z0-9\-]*\.[a-z0-9\-]+\.ts\.net"),
      None),
 
+    # 用户名从环境变量推导（见上方说明）—— 本文件里不出现真实值。
     ("personal-username",
-     re.compile(r"\b17414\b"),
+     re.compile(re.escape(CUR_USER)) if CUR_USER else re.compile(NEVER_MATCH),
      None),
 
     # 放行占位与**测试夹具**用的假用户名（expected/ 快照里就用 demo）。
@@ -64,16 +128,18 @@ RULES = [
      re.compile(r"[A-Za-z]:\\{1,2}Users\\{1,2}(?![<%$])([^\\\s\"']{2,})"),
      re.compile(r"(?i)^[A-Za-z]:\\{1,2}Users\\{1,2}(<|%|\$\{|demo|user|you|example|someone|your)")),
 
-    ("personal-task-marker",
-     re.compile(r"\bMYT-\d|\bT2D\b|\bGNN\b|\"my-tasks\""),
+    # 项目 id、专用编号前缀、课题关键词 —— 推导不出来，从本地文件读（见上方说明）。
+    ("local-private-literal",
+     re.compile(_literal_alt(LOCAL_LITERALS)),
      None),
 
     ("private-automation-path",
      re.compile(r"\.workbuddy[\\/]memory[\\/]automations"),
      None),
 
+    # 机器名同样从环境变量推导；不区分大小写（COMPUTERNAME 通常是大写）。
     ("hostname",
-     re.compile(r"\bHENG\b"),
+     re.compile(re.escape(CUR_HOST), re.I) if CUR_HOST else re.compile(NEVER_MATCH),
      None),
 
     # 值必须「像凭据」：无空白、无中日韩字符、长度 >= 8。
@@ -84,19 +150,28 @@ RULES = [
      re.compile(r"(?i)(your|<|xxx|placeholder|example|dummy|fake)")),
 ]
 
-SELFTEST_SAMPLES = [
-    ("email", "contact " + "leak" + "@" + "qq" + ".com now"),
-    ("authCode-literal-16", '"authCode": "' + "a1b2c3d4e5f6g7h8" + '"'),
-    ("wecom-webhook-key",
-     "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=" + "120d7245-aaaa-bbbb-cccc-ddeeaebb"),
-    ("real-tailnet-fqdn", "https://" + "heng" + "." + "tailfe5822" + ".ts.net"),
-    ("personal-username", "C:\\Users\\" + "174" + "14\\x"),
-    ("absolute-user-path", "C:\\Users\\" + "174" + "14\\.workbuddy\\apps"),
-    ("personal-task-marker", "task " + "T2" + "D" + "-MR done"),
-    ("private-automation-path", "apps\\mail-bridge\\.workbuddy\\memory\\automations\\x\\memory.md"),
-    ("hostname", "runner " + "HEN" + "G" + " here"),
-    ("secret-looking-literal", 'apiKey = "' + "sk9f3j2k4l5m6n7p" + '"'),
-]
+def selftest_samples():
+    """故意样本。**只用假值** —— 真实值靠环境变量 / 本地文件在运行时注入。"""
+    samples = [
+        ("email", "contact " + "leak" + "@" + "qq" + ".com now"),
+        ("authCode-literal-16", '"authCode": "' + "a1b2c3d4e5f6g7h8" + '"'),
+        ("wecom-webhook-key",
+         "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key="
+         + "120d7245-aaaa-bbbb-cccc-ddeeaebb"),
+        ("real-tailnet-fqdn", "https://" + "ex-machine" + ".demo-tailnet.ts.net"),
+        ("absolute-user-path", "C:\\Users\\" + "realleak" + "\\.workbuddy\\apps"),
+        ("private-automation-path",
+         "apps\\mail-bridge\\.workbuddy\\memory\\automations\\x\\memory.md"),
+        ("secret-looking-literal", 'apiKey = "' + "sk9f3j2k4l5m6n7p" + '"'),
+    ]
+    # 依赖运行环境的规则：能取到值才测，取不到就跳过（不算失败）
+    if CUR_USER:
+        samples.append(("personal-username", "C:\\Users\\" + CUR_USER + "\\x"))
+    if CUR_HOST:
+        samples.append(("hostname", "runner " + CUR_HOST + " here"))
+    if LOCAL_LITERALS:
+        samples.append(("local-private-literal", "prefix " + LOCAL_LITERALS[0] + " suffix"))
+    return samples
 
 SELFTEST_SHOULD_PASS = [
     "https://<机器名>.<tailnet>.ts.net",
@@ -108,6 +183,12 @@ SELFTEST_SHOULD_PASS = [
     '"wecomWebhookUrl": ""',
     "user@example.com",
 ]
+
+
+# 本地私有字面量清单**本身必然含真实值**（它就是那份清单），必须豁免，
+# 否则扫描器会把自己撞成 DIRTY。该文件已被 .gitignore 排除，不会进仓库。
+# 注意：本脚本自己**不再**豁免 —— 它已不含任何真实值，把密钥粘进来是能被抓到的。
+SKIP_BASENAMES = {"scan-secrets.local.json"}
 
 
 def should_skip(path):
@@ -142,8 +223,10 @@ def scan_text(text):
 
 def selftest():
     print("=== 自检：规则必须能抓到「故意的」样本 ===")
+    print("  （依赖环境的规则：用户名 %s / 机器名 %s / 本地字面量 %d 条）"
+          % (CUR_USER or "未取到", CUR_HOST or "未取到", len(LOCAL_LITERALS)))
     fails = 0
-    for expected_rule, sample in SELFTEST_SAMPLES:
+    for expected_rule, sample in selftest_samples():
         hit_rules = {name for name, _ in scan_text(sample)}
         ok = expected_rule in hit_rules
         fails += 0 if ok else 1

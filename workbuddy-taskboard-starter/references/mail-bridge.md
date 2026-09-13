@@ -130,7 +130,7 @@ copy config.example.json config.json
   "smtpPort": 465,
   "imapHost": "imap.qq.com",
   "imapPort": 993,
-  "taskboardProjectId": "wb-demo",
+  "taskboardProjectId": "my-project",
   "pollIntervalSec": 60,
   "lookbackDays": 7,
   "wecomWebhookUrl": "",
@@ -143,7 +143,7 @@ copy config.example.json config.json
 |---|---|
 | `email` / `authCode` | 你的 QQ 邮箱与 16 位授权码 |
 | `smtpHost` / `smtpPort` / `imapHost` / `imapPort` | 默认是 QQ 邮箱；换别家邮箱就改这里 |
-| `taskboardProjectId` | 把回复回写到哪个项目下的任务 |
+| `taskboardProjectId` | 把回复回写到哪个项目下的任务。**改成你自己的项目 id**（先 `taskctl project list` 查）。⚠️ 写到不存在的 id **不会报错**，只会把任务记到别处 |
 | `pollIntervalSec` | 常驻轮询间隔（秒） |
 | `lookbackDays` | 只扫最近几天的回复 |
 | `wecomWebhookUrl` / `pushWecom` | **可选单向兜底**，留空即关闭。⚠️ 用它收不到回复 |
