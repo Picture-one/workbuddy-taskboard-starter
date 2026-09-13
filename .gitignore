@@ -1,0 +1,25 @@
+# ---- 私密配置（最高优先级，手滑 git add -A 也带不上）----
+**/config.json
+!**/config.example.json
+
+# ---- 运行态 ----
+**/state/
+logs/
+install.log
+.starter-manifest.json
+_verify/
+*.log
+*.tmp
+__pycache__/
+*.pyc
+
+# ---- 上游构建产物 / 依赖 ----
+node_modules/
+dist/
+.data/
+.wrangler/
+.dev.vars*
+
+# ---- 本机备份 / 残件 ----
+*.bak-*
+*.removed-*

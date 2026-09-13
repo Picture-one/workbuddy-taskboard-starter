@@ -1,0 +1,3 @@
+@echo off
+set "NODE_EXE=C:\Users\demo\.workbuddy\binaries\node\versions\22.22.2-3\node.exe"
+"%NODE_EXE%" -e "fetch('http://127.0.0.1:47899/health').then(r=>{console.log('[taskboard] ONLINE  HTTP '+r.status);return r.text()}).then(t=>console.log('[taskboard] '+t)).catch(()=>{console.log('[taskboard] OFFLINE - run start-taskboard.cmd first.');process.exit(1)})"

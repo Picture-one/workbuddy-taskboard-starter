@@ -1,0 +1,4 @@
+@echo off
+set "NODE_EXE=C:\Users\demo\.workbuddy\binaries\node\versions\22.22.2-3\node.exe"
+set "CODEX_TASKBOARD_URL=http://127.0.0.1:47823"
+"%NODE_EXE%" "C:\Users\demo\.workbuddy\apps\dashi-taskboard\cli\taskctl.mjs" %*

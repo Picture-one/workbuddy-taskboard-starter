@@ -1,0 +1,5 @@
+@echo off
+setlocal
+set "PY=C:\Users\demo\.workbuddy\binaries\python\versions\3.13.12\python.exe"
+cd /d "%~dp0"
+"%PY%" mailer.py --test

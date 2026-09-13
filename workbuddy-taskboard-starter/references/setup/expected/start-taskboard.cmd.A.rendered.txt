@@ -1,0 +1,26 @@
+@echo off
+setlocal
+set "NODE_EXE=C:\Users\demo\.workbuddy\binaries\node\versions\22.22.2-3\node.exe"
+set "APP_DIR=C:\Users\demo\.workbuddy\apps\dashi-taskboard"
+set "CODEX_TASKBOARD_HOST=127.0.0.1"
+set "CODEX_TASKBOARD_PORT=47823"
+set "CODEX_TASKBOARD_DATA_DIR=C:\Users\demo\.workbuddy\taskboard-data"
+set "CODEX_TASKBOARD_URL=http://127.0.0.1:47823"
+REM Tailscale serve proxies here from https://demo-node.example.net.
+REM The server trusts only localhost/private ranges, not *.ts.net, so this
+REM origin must be allowlisted explicitly or phone requests get 403.
+REM Keep in sync with TRUSTED_ORIGIN in mail-bridge\common.py.
+set "CODEX_TASKBOARD_TRUSTED_ORIGINS=https://demo-node.example.net"
+
+netstat -ano | findstr /C:"LISTENING" | findstr /C:":47823" >nul 2>&1
+if not errorlevel 1 (
+  echo [taskboard] Port 47823 is already in use - the service may already be running.
+  echo [taskboard] Check with status-taskboard.cmd, or stop it with stop-taskboard.cmd.
+  exit /b 1
+)
+
+echo [taskboard] Starting service at http://127.0.0.1:47823
+echo [taskboard] Data dir: %CODEX_TASKBOARD_DATA_DIR%
+echo [taskboard] Press Ctrl+C to stop.
+cd /d "%APP_DIR%"
+"%NODE_EXE%" server\index.mjs

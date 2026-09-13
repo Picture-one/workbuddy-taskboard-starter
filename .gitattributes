@@ -1,0 +1,27 @@
+# 换行符约定
+# ----------
+# 重要前提：渲染器 `references/setup/render.py` 的 `default_eol()` 会**强制**
+# `.cmd` / `.bat` 目标文件输出为 CRLF，与模板自身的换行符无关。
+# 因此即使模板因为分发方式（GitHub ZIP 下载走的是 blob 内容，不经过 git 的
+# checkout 转换）而变成 LF，用户最终得到的批处理脚本依然是 CRLF。
+#
+# 这里做的是第二层保险 + 让协作行为可预期：仓库内统一 LF，Windows 专有格式
+# 显式钉成 CRLF，避免不同平台作者之间产生整文件级别的脏 diff。
+
+* text=auto eol=lf
+
+# Windows 批处理：crlf.exe 之外的解析器对 LF 容错性差（goto/label 等构造可能失效）
+*.cmd      text eol=crlf
+*.bat      text eol=crlf
+*.cmd.tpl  text eol=crlf
+*.bat.tpl  text eol=crlf
+
+# 二进制：禁止任何文本转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.zip   binary
+*.woff  binary
+*.woff2 binary

@@ -1,0 +1,22 @@
+{
+  "_comment": "复制本文件为 config.json 后再填。config.json 已被 .gitignore 排除，永远不会被提交。",
+  "_authCode_warning": "authCode 等同于邮箱密码 —— 不要提交、不要截图外发。",
+
+  "email": "你的QQ号@qq.com",
+  "authCode": "在QQ邮箱 设置→账号→IMAP/SMTP服务 处生成的16位授权码",
+
+  "smtpHost": "smtp.qq.com",
+  "smtpPort": 465,
+  "imapHost": "imap.qq.com",
+  "imapPort": 993,
+
+  "taskboardProjectId": "wb-demo",
+  "pollIntervalSec": 60,
+  "lookbackDays": 7,
+
+  "ackByEmail": true,
+
+  "_wecom_note": "可选的单向兜底提醒通道。官方不支持回调 —— 用它收不到回复，别在企业微信群里回指令。",
+  "wecomWebhookUrl": "",
+  "pushWecom": false
+}

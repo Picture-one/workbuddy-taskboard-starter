@@ -1,0 +1,816 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Taskboard 一键自检（严格只读）。
+
+回答一个问题：**本次登录时，开机自启到底执行了没有？服务是否健康？**
+并顺带查出几个「一次就能查出、但症状极难定位」的配置问题（最典型的是
+trusted origins 在两处漂移 -> 手机访问 403）。
+
+只读行为：只读文件 / 只读注册表 / 只做 TCP 连接与一次 GET 探测。
+不写任何文件、不创建文件、不启停任何服务、不改任何状态。
+
+为什么不能靠「日志里有没有内容」判断：
+  * logs\\autostart.log 同时是 Node 子进程的 stdout/stderr 落地点，
+    里面有大量无时间戳输出；
+  * 该文件可能被清空过。
+所以判定必须靠「带时间戳的 banner」与「本次登录时间 / 开机时间」比较。
+
+自启载体（2026-09-13 变更）：HKCU\\...\\Run 里的 Taskboard 值，指向
+**绝对路径的 pythonw.exe** + 本目录的 autostart-taskboard.pyw。
+曾经用「启动文件夹放 .pyw 指针」，已证伪：那会让系统走
+HKCR\\.pyw -> Python.NoConFile -> pyw.exe，而 pyw.exe 会挑 PEP 514
+注册里最高版本的 WindowedExecutablePath；本机注册表存在“僵尸”高版本
+（3.14 -> 不存在的 C:\\Python314），于是 pyw.exe 静默失败：
+零日志、零事件、退出码 101。检查 11 就是这条故障的哨兵。
+
+退出码：
+   0  自启生效且服务健康
+   1  自启执行过，但服务不健康
+   2  本次登录没有执行自启
+   3  无法判定
+  10  发现配置漂移或关键文件等严重问题（优先级最高，覆盖上面的结论码）
+"""
+
+import ctypes
+import ctypes.wintypes as wt
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+import winreg
+
+# ---------------------------------------------------------------- 路径与常量
+
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+CMD_FILE = os.path.join(APP_DIR, "start-taskboard.cmd")
+LAUNCHER = os.path.join(APP_DIR, "autostart-taskboard.pyw")
+NODE_EXE = r"C:\Users\demo\.workbuddy\binaries\node\versions\22.22.2-3\node.exe"
+PY_EXE = r"C:\Users\demo\.workbuddy\binaries\python\versions\3.13.12\python.exe"
+PYW_EXE = r"C:\Users\demo\.workbuddy\binaries\python\versions\3.13.12\pythonw.exe"
+SERVER_ENTRY = os.path.join(APP_DIR, "server", "index.mjs")
+LOG_DIR = os.path.join(APP_DIR, "logs")
+LOG_FILE = os.path.join(LOG_DIR, "autostart.log")
+STATE_FILE = os.path.join(LOG_DIR, "last-logon.json")
+STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""),
+                           r"Microsoft\Windows\Start Menu\Programs\Startup")
+STARTUP_STUB = os.path.join(STARTUP_DIR, "Taskboard.pyw")
+# mail-bridge 是**可选组件**。与看板同级目录下的 mail-bridge\common.py；
+# 未安装时相关检查降级为 INFO，绝不误报成配置错误。
+MAIL_BRIDGE_COMMON = os.path.join(os.path.dirname(APP_DIR), "mail-bridge", "common.py")
+NETSTAT_EXE = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                           "System32", "netstat.exe")
+STARTUP_APPROVED = (r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer"
+                    r"\StartupApproved\StartupFolder")
+STARTUP_APPROVED_RUN = (r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer"
+                        r"\StartupApproved\Run")
+RUN_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+# 自启载体：Run 件的值名。计划任务（/SC ONLOGON）在本机被 ACL 拒绝
+# （C:\Windows\System32\Tasks 根目录仅 Administrators/SYSTEM 可写，实测连
+# notepad 探针都 Access Denied），所以走免提权的 Run 件。
+RUN_VALUE_NAME = "TaskboardVerify"
+# py.exe 是 .pyw 文件关联的执行者。本方案已不依赖它，但它的默认版本解析
+# 正是 2026-09-13 那次静默失败的根因，所以保留一个只读哨兵（检查 11）。
+PY_LAUNCHER = os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                           r"Programs\Python\Launcher\py.exe")
+
+HOST = "127.0.0.1"
+DEFAULT_PORT = 47899
+
+# 必须与 autostart-taskboard.pyw 的 LOGON_MARKER / banner 格式串保持一致。
+# 下方 check_banner_sync() 会在两者不同步时报 FAIL —— 这类 bug 会静默给出
+# 假阴性结论（实际跑了却报「未执行」），是本脚本最需要防的一类错误。
+LOGON_MARKER = "=== logon run ==="
+TOLERANCE = 120.0          # 登录时间与 banner 之间允许的秒级提前量
+
+TS_LINE = re.compile(r"^\[(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\]\s?(.*)$")
+BANNER_RE = re.compile(
+    r"^=== logon run ===\s+pid=(\d+)\s+exe=(\S+)\s+argv=(\[.*?\])(?:\s+rotated=(\S+))?$")
+DETAIL_RE = re.compile(r"^logon run detail: port=(\d+)")
+EVENT_RE = re.compile(r"^(WARNING|ERROR)\b")
+
+EXIT_OK, EXIT_UNHEALTHY, EXIT_NOT_RUN, EXIT_UNKNOWN, EXIT_BAD = 0, 1, 2, 3, 10
+
+OK, BAD, INFO = "OK", "BAD", "INFO"
+findings = []
+
+
+# ---------------------------------------------------------------- 输出
+
+def emit(text=""):
+    """Print with an encoding fallback; never crashes on a weird codepage."""
+    try:
+        sys.stdout.write(str(text) + "\n")
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        try:
+            sys.stdout.write(str(text).encode(enc, "replace").decode(enc, "replace") + "\n")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def setup_stdout():
+    # When captured by a pipe (agent runs it), force UTF-8. A real console is left
+    # alone -- Python uses the Unicode console API there.
+    try:
+        if hasattr(sys.stdout, "reconfigure") and not sys.stdout.isatty():
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+
+def add(level, title, detail="", hint=""):
+    findings.append({"level": level, "title": title, "detail": detail, "hint": hint})
+    icon = {OK: "[ OK ]", BAD: "[FAIL]", INFO: "[INFO]"}[level]
+    emit("  %s %s%s" % (icon, title, ("   -> " + detail) if detail else ""))
+    if level == BAD and hint:
+        emit("         %s" % hint)
+
+
+# ---------------------------------------------------------------- 只读探测
+
+def boot_epoch():
+    """本次开机时间（epoch 秒）。ctypes 纯 stdlib，不依赖 WMI / PowerShell。
+
+    GetTickCount64 本身是 64 位，但 ctypes 默认按 c_int 解释返回值，
+    uptime 超过约 24.8 天会溢出 —— 必须显式声明 restype。
+    """
+    try:
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetTickCount64.restype = ctypes.c_ulonglong
+        return time.time() - kernel32.GetTickCount64() / 1000.0
+    except Exception:
+        return None
+
+
+TH32CS_SNAPPROCESS = 0x00000002
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+# 只用「用户登录才启动」的进程。注意 winlogon.exe 是开机就启动的（属会话 1），
+# 把它算进来会让「登录时间」退化成「开机时间」，注销重登场景直接失效。
+LOGON_PROXY_EXES = ("explorer.exe", "sihost.exe")
+
+
+class PROCESSENTRY32(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", wt.DWORD),
+        ("cntUsage", wt.DWORD),
+        ("th32ProcessID", wt.DWORD),
+        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+        ("th32ModuleID", wt.DWORD),
+        ("cntThreads", wt.DWORD),
+        ("th32ParentProcessID", wt.DWORD),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", wt.DWORD),
+        ("szExeFile", ctypes.c_char * 260),
+    ]
+
+
+def _ft_to_epoch(ft):
+    return ((ft.dwHighDateTime << 32) | ft.dwLowDateTime) / 1e7 - 11644473600.0
+
+
+def logon_epoch():
+    """本次登录会话起点 = explorer.exe / sihost.exe 中最早的创建时间。"""
+    hits = []
+    try:
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateToolhelp32Snapshot.restype = wt.HANDLE
+        kernel32.CreateToolhelp32Snapshot.argtypes = [wt.DWORD, wt.DWORD]
+        kernel32.Process32First.argtypes = [wt.HANDLE, ctypes.POINTER(PROCESSENTRY32)]
+        kernel32.Process32Next.argtypes = [wt.HANDLE, ctypes.POINTER(PROCESSENTRY32)]
+        kernel32.OpenProcess.restype = wt.HANDLE
+        kernel32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+        kernel32.GetProcessTimes.argtypes = [wt.HANDLE, ctypes.POINTER(wt.FILETIME),
+                                            ctypes.POINTER(wt.FILETIME),
+                                            ctypes.POINTER(wt.FILETIME),
+                                            ctypes.POINTER(wt.FILETIME)]
+        kernel32.CloseHandle.argtypes = [wt.HANDLE]
+
+        snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if not snapshot or snapshot == ctypes.c_void_p(-1).value:
+            return None, []
+        try:
+            entry = PROCESSENTRY32()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
+            more = kernel32.Process32First(snapshot, ctypes.byref(entry))
+            while more:
+                name = entry.szExeFile.decode("mbcs", "replace")
+                if name.lower() in LOGON_PROXY_EXES:
+                    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                                  False, entry.th32ProcessID)
+                    if handle:
+                        try:
+                            created = wt.FILETIME()
+                            exit_t = wt.FILETIME()
+                            kernel_t = wt.FILETIME()
+                            user_t = wt.FILETIME()
+                            if kernel32.GetProcessTimes(handle, ctypes.byref(created),
+                                                        ctypes.byref(exit_t),
+                                                        ctypes.byref(kernel_t),
+                                                        ctypes.byref(user_t)):
+                                hits.append((name, entry.th32ProcessID, _ft_to_epoch(created)))
+                        finally:
+                            kernel32.CloseHandle(handle)
+                more = kernel32.Process32Next(snapshot, ctypes.byref(entry))
+        finally:
+            kernel32.CloseHandle(snapshot)
+    except Exception:
+        return None, []
+    if not hits:
+        return None, []
+    return min(h[2] for h in hits), sorted(hits, key=lambda h: h[2])
+
+
+def tcp_listen(port):
+    probe = socket.socket()
+    probe.settimeout(1.0)
+    try:
+        probe.connect((HOST, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+def http_health(port, timeout=2.0):
+    """探测 /health。必须显式绕过 HTTP_PROXY，否则会拿到代理的假 502。"""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open("http://%s:%d/health" % (HOST, port), timeout=timeout) as resp:
+            return resp.status, (resp.read(300) or b"").decode("utf-8", "replace").strip()
+    except Exception as exc:
+        return None, repr(exc)
+
+
+def read_state():
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def read_log():
+    info = {"exists": False, "size": None, "mtime": None,
+            "entries": [], "banners": [], "node_lines": 0, "marker_lines": 0}
+    if not os.path.isfile(LOG_FILE):
+        return info
+    info["exists"] = True
+    try:
+        info["size"] = os.path.getsize(LOG_FILE)
+        info["mtime"] = os.path.getmtime(LOG_FILE)
+    except OSError:
+        pass
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as handle:
+            for raw in handle:
+                line = raw.rstrip("\r\n")
+                if LOGON_MARKER in line:
+                    info["marker_lines"] += 1
+                match = TS_LINE.match(line)
+                if not match:
+                    if line.strip():
+                        info["node_lines"] += 1     # Node 的无时间戳输出
+                    continue
+                stamp = time.mktime(time.strptime(
+                    "%s-%s-%s %s:%s:%s" % match.groups()[:6], "%Y-%m-%d %H:%M:%S"))
+                message = match.group(7)
+                info["entries"].append((stamp, message))
+                banner = BANNER_RE.match(message)
+                if banner:
+                    info["banners"].append({
+                        "ts": stamp, "pid": int(banner.group(1)), "exe": banner.group(2),
+                        "argv": banner.group(3), "rotated": banner.group(4),
+                    })
+    except Exception:
+        pass
+    return info
+
+
+def parse_argv_list(text):
+    try:
+        value = json.loads(text)
+        return value if isinstance(value, list) else []
+    except Exception:
+        return []
+
+
+def fmt(ts):
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "(未知)"
+
+
+def read_cmd_value(name):
+    """与启动器 read_board_env() 完全相同的解析逻辑；改动任一处必须同步另一处。"""
+    if not os.path.isfile(CMD_FILE):
+        return None, "start-taskboard.cmd 不存在"
+    try:
+        with open(CMD_FILE, "r", encoding="utf-8-sig", errors="replace") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if line[:3].lower() != "set":
+                    continue
+                match = re.match(r'set\s+"([A-Za-z_][A-Za-z0-9_]*)=(.*)"\s*$', line)
+                if match is None:
+                    match = re.match(r'set\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)\s*$', line)
+                if match and match.group(1) == name:
+                    return match.group(2), None
+    except Exception as exc:
+        return None, "读取 start-taskboard.cmd 失败: %r" % (exc,)
+    return None, "start-taskboard.cmd 里没有 %s" % name
+
+
+def read_trusted_origin():
+    if not os.path.isfile(MAIL_BRIDGE_COMMON):
+        return None, "mail-bridge\\common.py 不存在"
+    try:
+        with open(MAIL_BRIDGE_COMMON, "r", encoding="utf-8", errors="replace") as handle:
+            source = handle.read()
+    except Exception as exc:
+        return None, "读取 common.py 失败: %r" % (exc,)
+    match = re.search(r"(?m)^\s*TRUSTED_ORIGIN\s*=\s*(['\"])(.*?)\1\s*$", source)
+    if not match:
+        return None, "common.py 里找不到模块级 TRUSTED_ORIGIN 常量"
+    return match.group(2), None
+
+
+_ORIGIN_RE = re.compile(
+    r"^https://[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?"
+    r"(\.[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?)+"
+    r"(:\d{1,5})?$"
+)
+
+
+def origin_format_problem(value):
+    """复刻上游 parseTrustedOrigins 的校验，返回问题描述；没问题返回 None。
+
+    为什么必须单独做这一步：只看「两处是否一致」的漂移检查会**放行「一致但非法」的值**。
+    典型错法是把 tailscale 的裸域名（缺 https://）填进去 —— 两处一模一样，漂移检查报 OK，
+    而 node 在启动阶段就抛 `must contain valid HTTPS origins` 退出，服务连 TCP 都不通。
+    这类故障表现为「自检说配置没问题、但服务就是起不来」，极难定位。
+    """
+    items = [part.strip() for part in (value or "").split(",")]
+    seen = set()
+    for item in items:
+        lowered = item.lower()
+        if not item:
+            return "有空项（逗号前后漏了值）"
+        if "*" in item:
+            return "含通配符 *（上游只接受精确 origin）"
+        if not lowered.startswith("https://"):
+            return "缺 https:// 前缀（tailscale 的 DNSName 是裸域名，必须补上）"
+        if not _ORIGIN_RE.match(lowered):
+            return "不是合法的 exact origin（不能含路径 / 查询串 / 片段 / 凭证）"
+        if lowered in seen:
+            return "有重复项（上游会直接报错）"
+        seen.add(lowered)
+    return None
+
+
+def reg_open(root, path):
+    try:
+        return winreg.OpenKey(root, path, 0, winreg.KEY_READ), None
+    except Exception as exc:
+        return None, exc
+
+
+def reg_string(root, path, name):
+    key, err = reg_open(root, path)
+    if key is None:
+        return None, err
+    try:
+        return winreg.QueryValueEx(key, name)[0], None
+    except Exception as exc:
+        return None, exc
+    finally:
+        winreg.CloseKey(key)
+
+
+def startup_approved_names(path=STARTUP_APPROVED):
+    key, _err = reg_open(winreg.HKEY_CURRENT_USER, path)
+    if key is None:
+        return []
+    names = []
+    try:
+        count = winreg.QueryInfoKey(key)[1]
+        for index in range(count):
+            names.append(winreg.EnumValue(key, index))
+    except Exception:
+        pass
+    finally:
+        winreg.CloseKey(key)
+    return names
+
+
+def listener_pid(port):
+    """用 System32\\netstat.exe（是 exe，不是 .cmd，沙箱内也能跑）。"""
+    if not os.path.isfile(NETSTAT_EXE):
+        return None
+    try:
+        completed = subprocess.run([NETSTAT_EXE, "-ano"], capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace", timeout=20)
+        output = completed.stdout or ""
+    except Exception:
+        return None
+    needle = ":%d" % port
+    for line in output.splitlines():
+        parts = line.split()
+        if (len(parts) >= 5 and parts[0].upper() == "TCP"
+                and parts[3].upper() == "LISTENING" and parts[1].endswith(needle)):
+            try:
+                return int(parts[4])
+            except ValueError:
+                return None
+    return None
+
+
+def pyw_association():
+    cls, _err = reg_string(winreg.HKEY_CLASSES_ROOT, ".pyw", "")
+    if not cls:
+        return None
+    for sub in (r"Shell\Open\Command", r"Shell\open\command", r"shell\open\command"):
+        value, _err = reg_string(winreg.HKEY_CLASSES_ROOT, cls + "\\" + sub, "")
+        if value:
+            return value
+    return None
+
+
+def py_launcher_default():
+    """py.exe 会选中的默认解释器路径（PEP 514 里版本最高的那个）。
+
+    只读：跑一次 `py.exe -0p`，取带 `*` 那一行的最后一个 token。没有副作用，
+    不改注册表、不启动任何 Python 解释器。
+    """
+    if not os.path.isfile(PY_LAUNCHER):
+        return None, "py.exe 不存在: %s" % PY_LAUNCHER
+    try:
+        completed = subprocess.run([PY_LAUNCHER, "-0p"], capture_output=True, timeout=15)
+    except Exception as exc:
+        return None, repr(exc)
+    raw = completed.stdout or b""
+    text = raw.decode("utf-8", "replace")
+    if not text.strip():
+        text = raw.decode("mbcs", "replace")
+    for line in text.splitlines():
+        if "*" in line:
+            parts = line.split()
+            if parts:
+                return parts[-1], None
+    return None, None
+
+
+def run_value_interpreter(value):
+    """从 Run 件的值里取出被调用的解释器路径（第一个带引号的 token）。"""
+    if not value:
+        return None
+    text = value.strip()
+    if text.startswith('"'):
+        end = text.find('"', 1)
+        if end > 0:
+            return text[1:end]
+    return text.split()[0] if text.split() else None
+
+
+# ---------------------------------------------------------------- 判定
+
+def banner_sync_verdict(log_info):
+    """防「banner 存在但正则匹配不上」导致的静默假阴性。"""
+    if log_info["marker_lines"] and not log_info["banners"]:
+        return ("banner 出现但解析失败：自检脚本的正则与启动器的格式串已不同步",
+                "%d 行含 `%s`，但 0 行能匹配 BANNER_RE" % (log_info["marker_lines"], LOGON_MARKER))
+    return None
+
+
+def decide(log_info, last_banner, boot_ts, logon_ts, healthy, listening, port):
+    """返回 (退出码, 标题, 理由列表)。"""
+    if last_banner and logon_ts and last_banner["ts"] >= logon_ts - TOLERANCE:
+        if healthy:
+            return EXIT_OK, "自启生效，服务健康", [
+                "日志里最后一条启动记录 %s，不早于本次登录时间 %s"
+                % (fmt(last_banner["ts"]), fmt(logon_ts)),
+                "/health 返回 HTTP 200",
+            ]
+        return EXIT_UNHEALTHY, "自启执行过，但服务没起来", [
+            "启动记录 %s 不早于本次登录时间 %s —— 脚本确实被执行了"
+            % (fmt(last_banner["ts"]), fmt(logon_ts)),
+            "但 127.0.0.1:%d %s" % (port, "TCP 可连、/health 却不是 200"
+                                    if listening else "连 TCP 都不通"),
+        ]
+
+    if last_banner and boot_ts and last_banner["ts"] >= boot_ts - TOLERANCE:
+        return EXIT_UNKNOWN, "本次登录之后没有新的自启记录", [
+            "最新启动记录 %s 晚于开机时间 %s，但早于本次登录时间 %s"
+            % (fmt(last_banner["ts"]), fmt(boot_ts), fmt(logon_ts)),
+            "若你只是注销后重新登录：启动文件夹项本应重新执行，这属于异常",
+            "若 explorer.exe 被手工重启过：本判据会误报，请人工核对上面的时间",
+        ]
+
+    if last_banner:
+        return EXIT_NOT_RUN, "本次登录没有执行自启", [
+            "最新启动记录 %s 早于开机时间 %s —— 那是上一次开机留下的"
+            % (fmt(last_banner["ts"]), fmt(boot_ts)),
+        ]
+
+    if not log_info["exists"]:
+        return EXIT_NOT_RUN, "本次登录没有执行自启（日志文件不存在）", [
+            "logs\\autostart.log 不存在，说明启动器一次都没跑过",
+        ]
+    if log_info["mtime"] and logon_ts and log_info["mtime"] < logon_ts - TOLERANCE:
+        return EXIT_NOT_RUN, "本次登录没有执行自启", [
+            "日志里 0 条启动记录，且文件最后修改时间 %s 早于本次登录时间 %s"
+            % (fmt(log_info["mtime"]), fmt(logon_ts)),
+        ]
+    if log_info["mtime"] and boot_ts and log_info["mtime"] < boot_ts - TOLERANCE:
+        return EXIT_NOT_RUN, "本次开机没有执行自启", [
+            "日志 0 条启动记录，且最后修改时间 %s 早于开机时间 %s"
+            % (fmt(log_info["mtime"]), fmt(boot_ts)),
+        ]
+    return EXIT_UNKNOWN, "无法判定", [
+        "日志里没有启动记录，但文件在本次登录/开机之后被动过（可能被清空过）",
+        "下次重启前请不要清空 logs\\autostart.log，或先手工跑一次启动器制造基准记录",
+    ]
+
+
+def main():
+    global findings
+    setup_stdout()
+    findings = []
+
+    boot_ts = boot_epoch()
+    logon_ts, logon_hits = logon_epoch()
+    state = read_state()
+
+    port = DEFAULT_PORT
+    raw_port, _err = read_cmd_value("CODEX_TASKBOARD_PORT")
+    if raw_port:
+        try:
+            port = int(raw_port)
+        except ValueError:
+            port = DEFAULT_PORT
+
+    listening = tcp_listen(port)
+    status, body = http_health(port) if listening else (None, "not listening")
+    healthy = (status == 200)
+    pid = listener_pid(port) if listening else None
+
+    log_info = read_log()
+    sync_problem = banner_sync_verdict(log_info)
+    # 只把「真跑到 logon 路径」的 banner 算进判定；带 argv 的是冒烟自测残留。
+    logon_banners = [b for b in log_info["banners"] if not parse_argv_list(b["argv"])]
+    smoke_banners = [b for b in log_info["banners"] if parse_argv_list(b["argv"])]
+    last_banner = logon_banners[-1] if logon_banners else None
+
+    emit("=" * 68)
+    emit("[taskboard 自检] %s" % time.strftime("%Y-%m-%d %H:%M:%S"))
+    emit("=" * 68)
+
+    verdict, headline, reasons = decide(log_info, last_banner, boot_ts, logon_ts,
+                                        healthy, listening, port)
+    icon = {EXIT_OK: "✅", EXIT_UNHEALTHY: "⚠️", EXIT_NOT_RUN: "❌", EXIT_UNKNOWN: "ℹ️"}[verdict]
+    code_word = {EXIT_OK: "通过", EXIT_UNHEALTHY: "执行过但不健康",
+                 EXIT_NOT_RUN: "未执行", EXIT_UNKNOWN: "无法判定"}[verdict]
+
+    emit("")
+    emit("【结论】%s %s" % (icon, headline))
+    for reason in reasons:
+        emit("        · %s" % reason)
+
+    last_event = None
+    for stamp, message in reversed(log_info["entries"]):
+        if EVENT_RE.match(message):
+            last_event = (stamp, message)
+            break
+    if last_event and verdict in (EXIT_UNHEALTHY, EXIT_NOT_RUN, EXIT_UNKNOWN):
+        emit("        · 日志里最后一条告警/错误（%s）：" % fmt(last_event[0]))
+        emit("            %s" % last_event[1])
+
+    if state and state.get("result") not in (None, "up", "already_running"):
+        emit("        · last-logon.json 记录 result=%r note=%r"
+             % (state.get("result"), state.get("note")))
+    if smoke_banners:
+        emit("        · 注：日志里另有 %d 条冒烟自测记录（argv 非空），已排除在判定之外"
+             % len(smoke_banners))
+
+    emit("")
+    emit("【环境】")
+    emit("  开机时间    : %s" % (fmt(boot_ts) if boot_ts else "(GetTickCount64 失败)"))
+    emit("  本次登录    : %s" % (fmt(logon_ts) if logon_ts else "(未找到 explorer.exe / sihost.exe)"))
+    if logon_hits:
+        emit("  登录判据    : %s" % ", ".join(
+            "%s(pid %d, %s)" % (n, p, fmt(t)) for n, p, t in logon_hits))
+    emit("  服务端口    : 127.0.0.1:%d   TCP=%s   /health=%s"
+         % (port, "监听" if listening else "不通",
+            ("HTTP %s" % status) if status else "无响应"))
+    if pid:
+        emit("  占用进程    : pid=%d" % pid)
+    if healthy:
+        emit("  健康响应    : %s" % body)
+    emit("  真实日志    : %s" % LOG_FILE)
+    emit("               %s 字节，最后修改 %s"
+         % (log_info["size"] if log_info["size"] is not None else "-", fmt(log_info["mtime"])))
+    emit("  日志条目    : 带时间戳 %d 条（启动记录 %d 条）/ Node 无时间戳 %d 行"
+         % (len(log_info["entries"]), len(log_info["banners"]), log_info["node_lines"]))
+    emit("  最后启动记录: %s" % (fmt(last_banner["ts"]) if last_banner else "无"))
+
+    emit("")
+    emit("【配置检查】")
+
+    # 0) trusted origins 格式 —— 必须**先**于漂移检查做。
+    #    漂移检查只问「两处是否一致」，一个「一致但非法」的值会顺利通过，
+    #    而服务端 parseTrustedOrigins 会直接抛异常让 node 启动失败。
+    #    这两类问题症状相似（服务起不来），但修法完全不同，所以必须分开报。
+    cmd_origin_raw, _cmd_origin_err = read_cmd_value("CODEX_TASKBOARD_TRUSTED_ORIGINS")
+    cmd_origin = cmd_origin_raw if cmd_origin_raw is not None else ""
+    if not cmd_origin:
+        add(INFO, "未启用远程访问（trusted origins 未设置）",
+            "服务端对「未设置」是宽容的（走默认私有网段白名单），属安全默认值。")
+    else:
+        problem = origin_format_problem(cmd_origin)
+        if problem:
+            add(BAD, "trusted origins 格式非法 —— 服务会起不来", "%r：%s" % (cmd_origin, problem),
+                "上游要求「精确 HTTPS origin」。正确形如 "
+                "set \"CODEX_TASKBOARD_TRUSTED_ORIGINS=https://<机器名>.<tailnet>.ts.net\"。"
+                "改完两处后重启服务；这类错误会让 node 在启动阶段就退出，日志里是 "
+                "must contain valid HTTPS origins。")
+        else:
+            add(OK, "trusted origins 格式合法", repr(cmd_origin))
+
+    # 1) trusted origins 漂移 —— 症状是手机 403，且只在其中一路实例上出现。
+    #    两个「不算错」的情形必须放行，否则单独装面板的用户会拿到误导性的退出码 10：
+    #      a) 没装 mail-bridge（可选组件）—— 跳过这项检查
+    #      b) start-taskboard.cmd 里没有那一行 —— 等于「未启用远程访问」，
+    #         等价于空串，是安全默认值（服务端对「未设置」是宽容的）
+    if not os.path.isfile(MAIL_BRIDGE_COMMON):
+        add(INFO, "未安装 mail-bridge（可选组件），跳过 origin 漂移检查",
+            "不启用远程访问时属正常；装了 mail-bridge 才会比对两处 origin。")
+    else:
+        py_origin, py_origin_err = read_trusted_origin()
+        if py_origin_err:
+            add(BAD, "mail-bridge 的 TRUSTED_ORIGIN 读取失败", py_origin_err,
+                "检查 common.py 里是否有模块级 `TRUSTED_ORIGIN = '...'`")
+        elif cmd_origin == py_origin:
+            add(OK, "trusted origins 逐字符一致", repr(cmd_origin))
+        else:
+            add(BAD, "配置漂移：两处 trusted origin 不一致",
+                "start-taskboard.cmd=%r / common.py TRUSTED_ORIGIN=%r" % (cmd_origin, py_origin),
+                "症状是手机访问 403、且只在其中一路实例上出现。把两边改成同一个值即可。")
+
+    # 2-4) 关键文件
+    for label, path in (("node.exe", NODE_EXE),
+                        ("server\\index.mjs", SERVER_ENTRY),
+                        ("启动器 autostart-taskboard.pyw", LAUNCHER)):
+        if os.path.isfile(path):
+            add(OK, "%s 存在" % label, path)
+        else:
+            add(BAD, "%s 缺失" % label, path, "自启一定会失败；先恢复该文件再重启。")
+
+    # 5) 自启载体：HKCU\...\Run 里的 Taskboard 值
+    run_val, run_err = reg_string(winreg.HKEY_CURRENT_USER, RUN_KEY, RUN_VALUE_NAME)
+    if run_val is None:
+        add(BAD, "HKCU\\Run 里没有 %r 自启项" % RUN_VALUE_NAME, repr(run_err),
+            "自启根本不会被触发。重建命令：\n"
+            '         reg add "HKCU\\%s" /v %s /t REG_SZ '
+            '/d "\\"%s\\" \\"%s\\"" /f' % (RUN_KEY, RUN_VALUE_NAME, PYW_EXE, LAUNCHER))
+    else:
+        interpreter = run_value_interpreter(run_val)
+        if LAUNCHER.lower() not in (run_val or "").lower():
+            add(BAD, "HKCU\\Run 的 %r 没有指向启动器" % RUN_VALUE_NAME, run_val,
+                "值里必须同时有绝对路径 pythonw.exe 和 %s" % LAUNCHER)
+        elif not interpreter:
+            add(BAD, "HKCU\\Run 的值解析不出解释器", run_val)
+        elif not interpreter.lower().endswith("pythonw.exe"):
+            add(BAD, "HKCU\\Run 没有直接用 pythonw.exe", interpreter,
+                "不能写 .pyw 文件让系统自己找解释器 —— 那会走 pyw.exe 的默认版本解析"
+                "（见检查 11），本机上会静默失败。")
+        elif not os.path.isfile(interpreter):
+            add(BAD, "HKCU\\Run 指向的解释器不存在", interpreter,
+                "自启会静默失败。改成存在的 pythonw.exe 绝对路径"
+                "（WorkBuddy 升级后路径可能变；可退回 %s）。" % PYW_EXE)
+        else:
+            add(OK, "HKCU\\Run 自启已配置", run_val)
+
+    # 5b) 启动文件夹指针：改用 Run 件后「不存在」才是预期
+    if os.path.isfile(STARTUP_STUB):
+        add(INFO, "启动夹里仍有 Taskboard.pyw", STARTUP_STUB,
+            "已改用 HKCU\\Run。两份都生效会各写一条启动记录并抢同一个端口，"
+            "请把它移走（留作备份，别直接删）。")
+    else:
+        add(OK, "启动夹指针已移除（符合 Run 件方案）", STARTUP_STUB)
+
+    # 6) 是否被「任务管理器 → 启动应用」禁用
+    #    Run 件的禁用记录在 StartupApproved\Run，启动夹的在 StartupApproved\StartupFolder。
+    approved = []
+    for path in (STARTUP_APPROVED_RUN, STARTUP_APPROVED):
+        for item in startup_approved_names(path):
+            if "taskboard" in str(item[0]).lower():
+                approved.append((path.rsplit("\\", 1)[-1], item))
+    if not approved:
+        add(OK, "自启未被系统禁用",
+            "StartupApproved 的 Run / StartupFolder 里都没有 Taskboard 条目")
+    else:
+        add(BAD, "Taskboard 在 StartupApproved 里有条目", "raw=%r" % (approved,),
+            "首字节语义各版本不一，本脚本不臆测。到「任务管理器 → 启动应用」里"
+            "确认 Taskboard 是「已启用」。")
+
+    # 7) .pyw 关联 —— 自启已不依赖它，只留信息、不再据此判故障
+    assoc = pyw_association()
+    if assoc:
+        add(INFO, ".pyw 关联（本方案已不依赖）", assoc)
+    else:
+        add(INFO, ".pyw 没有可用关联（本方案已不依赖）", "HKCR\\.pyw 解析失败")
+
+    # 7b) py.exe 默认解释器哨兵 —— 2026-09-13 那次静默失败的根因遥测。
+    #     本方案不用它，所以判 INFO 而不是 FAIL，避免淹没主结论。
+    default_py, py_err = py_launcher_default()
+    if py_err:
+        add(INFO, "无法解析 py.exe 的默认解释器", py_err)
+    elif not default_py:
+        add(INFO, "py.exe 未标出默认版本", "`py -0p` 输出里没有含 `*` 的行")
+    elif os.path.isfile(default_py):
+        add(OK, "py.exe 默认解释器路径存在（.pyw 链路健康）", default_py)
+    else:
+        add(INFO, "py.exe 默认解释器指向不存在的文件",
+            "%s —— 这是 .pyw 走 pyw.exe 时静默失败、零日志零事件的根因。"
+            "本方案已绕开它；要根治可恢复该解释器或清掉这条死的 PEP 514 注册。" % default_py)
+
+    # 8) 日志可写（os.access，不做写模式打开，保持严格只读）
+    if not os.path.isdir(LOG_DIR):
+        add(BAD, "logs 目录不存在", LOG_DIR,
+            "启动器首次运行会自动创建；若父目录不可写就会静默失败。")
+    elif not log_info["exists"]:
+        add(INFO, "logs 目录存在，但还没有 autostart.log", LOG_DIR, "首次运行会自动创建。")
+    elif os.access(LOG_FILE, os.W_OK):
+        add(OK, "日志文件可写（os.access W_OK）", LOG_FILE)
+    else:
+        add(BAD, "日志文件不可写", repr(LOG_FILE),
+            "这正是「日志一片空白」的根因：修 ACL 或换目录，否则自启失败时没有任何证据。")
+
+    # 9) banner 格式自同步 —— 防静默假阴性，最危险的一类 bug
+    if sync_problem:
+        add(BAD, sync_problem[0], sync_problem[1],
+            "这会让自检把「实际执行过」误报成「未执行」。修好两边的格式串再继续。")
+    else:
+        add(OK, "banner 格式与自检解析一致",
+            "标记 `%s` 解析到 %d 条启动记录" % (LOGON_MARKER, len(log_info["banners"])))
+
+    # 10) last-logon.json 的 boot_epoch 交叉验证
+    if state is None:
+        add(INFO, "没有 last-logon.json", STATE_FILE,
+            "加固后的启动器第一次成功执行后才会出现。")
+    elif state.get("boot_epoch") and boot_ts:
+        if abs(state["boot_epoch"] - boot_ts) <= 5:
+            add(OK, "last-logon.json 属于本次开机", "boot_epoch=%s" % state["boot_epoch"])
+        else:
+            add(INFO, "last-logon.json 是上一次开机的记录",
+                "记录=%s / 当前=%s" % (fmt(state["boot_epoch"]), fmt(boot_ts)),
+                "若结论是「未执行自启」，这与之一致。")
+
+    emit("")
+    emit("【下一步】")
+    if verdict == EXIT_OK:
+        emit("  1. 自启正常，无需操作。")
+        emit("  2. 手机若打不开，看上面的【配置检查】，重点是 trusted origins 那一项。")
+    elif verdict == EXIT_UNHEALTHY:
+        emit("  1. 先看上面贴出的最后一条 WARNING/ERROR 原文，再看日志里 Node 的无时间戳输出。")
+        emit("  2. 手工跑一次启动器定位：")
+        emit('     "%s" "%s"' % (PYW_EXE, LAUNCHER))
+        emit("  3. 若手工能起来、登录起不来，说明是启动项问题，见下面的第 4 步。")
+    elif verdict == EXIT_NOT_RUN:
+        emit("  1. 先看【配置检查】有没有 [FAIL]，有就先修那个。")
+        emit("  2. 手工跑一次启动器，确认它自己能写日志：")
+        emit('     "%s" "%s"' % (PYW_EXE, LAUNCHER))
+        emit("     跑完再运行本自检；若这时变成「生效」，说明是启动项没被执行。")
+        emit("  3. 任务管理器 → 启动应用 → 确认 Taskboard 是「已启用」。")
+        emit("  4. 若 Run 件缺了或指向错误，用这条重建"
+             "（在你自己的 PowerShell 窗口里执行）：")
+        emit("     reg add \"HKCU\\%s\" /v %s /t REG_SZ "
+             "/d \"\\\"%s\\\" \\\"%s\\\"\" /f"
+             % (RUN_KEY, RUN_VALUE_NAME, PYW_EXE, LAUNCHER))
+        emit("     注意必须直接调 pythonw.exe；写成 .pyw 文件会回退到 pyw.exe"
+             " 的默认解释器解析（见检查 7b）。")
+    else:
+        emit("  1. 无法判定通常是因为日志被动过/清空过。下次重启前别清空 logs\\autostart.log。")
+        emit("  2. 也可以现在手工跑一次启动器，制造一条基准记录：")
+        emit('     "%s" "%s"' % (PYW_EXE, LAUNCHER))
+
+    has_bad = any(item["level"] == BAD for item in findings)
+    code = EXIT_BAD if has_bad else verdict
+    emit("")
+    if has_bad:
+        emit("  结果 = %s（%s）；另有 %d 项配置/文件问题 -> 退出码 %d"
+             % (code_word, verdict, sum(1 for i in findings if i["level"] == BAD), EXIT_BAD))
+    else:
+        emit("  结果 = %s" % code_word)
+    emit("退出码 = %d   (0=通过  1=执行过但不健康  2=未执行  3=无法判定  10=配置/文件问题)" % code)
+    emit("=" * 68)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

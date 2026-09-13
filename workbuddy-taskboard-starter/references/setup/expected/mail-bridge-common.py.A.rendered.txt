@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+"""mail-bridge 公共层：配置读取、看板读写、状态文件。
+
+设计要点：全程只用 Python 标准库（smtplib / imaplib / email / json），
+不依赖任何第三方包，也不依赖 npm。
+"""
+
+import atexit
+import datetime
+import json
+import os
+import subprocess
+import time
+import urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(HERE, 'config.json')
+STATE_DIR = os.path.join(HERE, 'state')
+
+NODE = r'C:\Users\demo\.workbuddy\binaries\node\versions\22.22.2-3\node.exe'
+TASKBOARD_APP = r'C:\Users\demo\.workbuddy\apps\dashi-taskboard'
+TASKBOARD_DATA = r'C:\Users\demo\.workbuddy\taskboard-data'
+TASKCTL = os.path.join(TASKBOARD_APP, 'cli', 'taskctl.mjs')
+TASKBOARD_URL = 'http://127.0.0.1:47823'
+
+# Tailscale serve 会把手机请求反代到上面的回环地址，但透传的 Host/Origin 是
+# https://<机器名>.<tailnet>.ts.net。服务端的来源校验只信任本机与私有网段
+# （不含 *.ts.net），必须把这个 origin 显式放进白名单，否则这里「按需拉起」
+# 的临时实例会让手机访问 403（而手动启动的常驻实例却正常，最难查）。
+# 必须与 apps\dashi-taskboard\start-taskboard.cmd 里的
+# CODEX_TASKBOARD_TRUSTED_ORIGINS 保持一致。
+# 留空字符串 = 关闭 Tailscale 访问，回到纯回环。
+# 格式约束（服务端会硬校验，写错服务直接起不来）：只能是精确的 HTTPS origin，
+# 不带路径/查询/片段/凭证，多项用英文逗号分隔。
+TRUSTED_ORIGIN = 'https://demo-node.example.net'
+
+THREAD_ID = 'mail-bridge'
+
+VALID_STATUSES = ['backlog', 'todo', 'in_progress', 'in_review', 'blocked', 'done', 'canceled']
+
+DEFAULT_CONFIG = {
+    'email': '',
+    'authCode': '',
+    'smtpHost': 'smtp.qq.com',
+    'smtpPort': 465,
+    'imapHost': 'imap.qq.com',
+    'imapPort': 993,
+    'taskboardProjectId': 'wb-demo',
+    'pollIntervalSec': 60,
+    'lookbackDays': 7,
+    'ackByEmail': True,
+    # 备用上行通道：企业微信「消息推送」群机器人 webhook。
+    # 邮件能到微信时它只是冗余；邮件通道不通时它保证提醒仍能到你手机上。
+    'wecomWebhookUrl': '',
+    'pushWecom': False,
+}
+
+
+def die(msg, code=2):
+    print('[错误] ' + msg)
+    raise SystemExit(code)
+
+
+def today():
+    return datetime.date.today().isoformat()
+
+
+def ensure_state_dir():
+    os.makedirs(STATE_DIR, exist_ok=True)
+    return STATE_DIR
+
+
+def load_json(path, default=None):
+    if not os.path.exists(path):
+        return default
+    try:
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def save_json(path, obj):
+    ensure_state_dir()
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def load_config(require_auth=True):
+    if not os.path.exists(CONFIG_PATH):
+        die('找不到 config.json，请先从 config.json 复制一份并填写 email / authCode')
+    cfg = dict(DEFAULT_CONFIG)
+    cfg.update(load_json(CONFIG_PATH, {}) or {})
+    if require_auth:
+        if not cfg.get('email') or not cfg.get('authCode'):
+            die('config.json 里的 email / authCode 还没填。')
+    return cfg
+
+
+PROXY_ENV_KEYS = (
+    'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy',
+)
+
+# ⚠️ 本机环境里设了 HTTP_PROXY / HTTPS_PROXY，Python 的 urllib 会把 **127.0.0.1 也走代理**，
+#    于是健康检查会拿到代理返回的假 502，误判服务离线。所有本机请求必须显式绕过代理。
+NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+_booted_server = None
+
+
+def clean_env():
+    """剥离代理变量，并显式声明本机不走代理。"""
+    env = dict(os.environ)
+    for k in PROXY_ENV_KEYS:
+        env.pop(k, None)
+    env['NO_PROXY'] = '127.0.0.1,localhost'
+    env['no_proxy'] = '127.0.0.1,localhost'
+    return env
+
+
+def taskboard_online(timeout=2):
+    try:
+        with NO_PROXY_OPENER.open(TASKBOARD_URL + '/health', timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _stop_owned_server():
+    """只回收我们自己在本次运行里拉起的那个实例，不动用户手动启动的。"""
+    global _booted_server
+    if _booted_server is not None and _booted_server.poll() is None:
+        try:
+            _booted_server.terminate()
+            _booted_server.wait(timeout=5)
+        except Exception:
+            pass
+    _booted_server = None
+
+
+atexit.register(_stop_owned_server)
+
+
+def ensure_taskboard(verbose=True):
+    """看板服务不可用时，临时拉起一个，脚本结束自动回收。
+
+    为什么不是「拉起来就让它常驻」：子进程会被宿主进程组连带回收，
+    指望它长期活着不可靠。改成 **按需启动 + 用完即收**：
+    每次要访问看板时启动，本次运行结束（含异常退出）由 atexit 关掉。
+    你自己的看板 UI 仍然用 apps\\dashi-taskboard\\start-taskboard.cmd 手动开。
+    """
+    global _booted_server
+    if taskboard_online():
+        return True
+    if verbose:
+        print('[自愈] 看板服务未响应，临时拉起 ...')
+
+    env = clean_env()
+    env['CODEX_TASKBOARD_HOST'] = '127.0.0.1'
+    env['CODEX_TASKBOARD_PORT'] = '47823'
+    env['CODEX_TASKBOARD_DATA_DIR'] = TASKBOARD_DATA
+    if TRUSTED_ORIGIN:
+        # 与 start-taskboard.cmd 保持一致，否则临时实例会让 Tailscale 侧访问 403
+        env['CODEX_TASKBOARD_TRUSTED_ORIGINS'] = TRUSTED_ORIGIN
+
+    log_path = os.path.join(TASKBOARD_APP, 'server.log')
+    kwargs = {'cwd': TASKBOARD_APP, 'env': env}
+    if os.name == 'nt':
+        kwargs['creationflags'] = 0x08000000  # CREATE_NO_WINDOW
+    try:
+        log = open(log_path, 'ab')
+        _booted_server = subprocess.Popen(
+            [NODE, os.path.join(TASKBOARD_APP, 'server', 'index.mjs')],
+            stdout=log, stderr=log, **kwargs
+        )
+    except Exception as e:
+        die('看板服务启动失败：%s' % e)
+
+    for _ in range(24):
+        time.sleep(0.7)
+        if taskboard_online():
+            if verbose:
+                print('[自愈] 已就绪（本次运行结束后自动停）。')
+            return True
+        if _booted_server.poll() is not None:
+            die('看板服务启动后立刻退出，请看 %s' % log_path)
+    die('看板服务 17 秒内未就绪，请看 %s' % log_path)
+
+
+def taskctl(args, parse_json=True):
+    """调用 taskctl CLI。返回解析后的 JSON 或原始文本。"""
+    ensure_taskboard()
+    env = clean_env()
+    env['CODEX_TASKBOARD_URL'] = TASKBOARD_URL
+    proc = subprocess.run(
+        [NODE, TASKCTL] + list(args),
+        capture_output=True, text=True, encoding='utf-8', errors='replace', env=env,
+    )
+    out = (proc.stdout or '').strip()
+    if proc.returncode != 0:
+        raise RuntimeError('taskctl 退出码 %s\n%s\n%s' % (proc.returncode, out, (proc.stderr or '').strip()))
+    if parse_json and out.startswith('{'):
+        return json.loads(out)
+    if parse_json and out.startswith('['):
+        return json.loads(out)
+    return out
+
+
+def list_tasks(project_id, status=None):
+    args = ['issue', 'list', '--project', project_id, '--json']
+    if status:
+        args = ['issue', 'list', '--project', project_id, '--status', status, '--json']
+    data = taskctl(args)
+    if isinstance(data, dict):
+        return data.get('tasks') or []
+    return data or []
+
+
+def open_tasks(project_id):
+    """未归档且未完成/取消的任务。"""
+    out = []
+    for t in list_tasks(project_id):
+        if t.get('archivedAt'):
+            continue
+        if t.get('status') in ('done', 'canceled'):
+            continue
+        out.append(t)
+    return out
+
+
+def digest_path(day):
+    return os.path.join(ensure_state_dir(), 'digest-%s.json' % day)
+
+
+def processed_path():
+    return os.path.join(ensure_state_dir(), 'processed.json')
+
+
+def review_path(day):
+    return os.path.join(ensure_state_dir(), 'review-%s.md' % day)
+
+
+def resolve_index(index):
+    """把回复里的编号解析回 taskboard 任务。从最近的摘要文件往回找。"""
+    idx = str(index)
+    for name in sorted(os.listdir(ensure_state_dir()), reverse=True):
+        if not (name.startswith('digest-') and name.endswith('.json')):
+            continue
+        data = load_json(os.path.join(STATE_DIR, name), {}) or {}
+        entry = (data.get('map') or {}).get(idx)
+        if entry:
+            entry = dict(entry)
+            entry['digestDay'] = data.get('day')
+            return entry
+    return None
