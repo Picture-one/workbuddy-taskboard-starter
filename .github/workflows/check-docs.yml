@@ -38,3 +38,14 @@ jobs:
 
       - name: 文档体检（伪链接 / 断链 / 大小写 / 锚点 / 构建溯源 / 自包含）
         run: python .github/scripts/check-docs.py
+
+      # 第二道关：安装器模板与快照回归。
+      #
+      # 为什么也要上 CI：`expected/*.rendered.txt` 是 render.py + 模板的锁死基线，
+      # 一旦有人改了模板忘了刷基线，陌生人装出来的东西就和被测过的不一样 ——
+      # 而**本机查不出来**：Windows 与 Linux 的换行/编码差异、以及本地那份
+      # 工作副本可能已经带着未提交的改动。CI 面对的是干净检出，才是真判据。
+      #
+      # 该脚本同样是纯标准库（从仓库里加载 render.py），无需 pip install。
+      - name: 安装器回归（模板渲染 / 占位符键 / 快照 / 语法 / 脱敏）
+        run: python .github/scripts/check-setup.py

@@ -223,7 +223,8 @@ workbuddy-taskboard-starter/
 │   │   ├── check-docs.yml    ← 文档体检（每次推送 / PR 都跑）
 │   │   └── pages.yml         ← 把使用说明发到 Pages（**部署前先体检**）
 │   └── scripts/
-│       ├── check-docs.py     ← 体检器：判据与白名单都在这一个文件里
+│       ├── check-docs.py     ← 文档体检器：判据与白名单都在这一个文件里
+│       ├── check-setup.py    ← 安装器体检器：模板渲染 / 快照回归 / 语法 / 脱敏
 │       └── build-usage-guide.py ← 从 .md 构建单文件 .html（自动注入溯源指纹）
 └── workbuddy-taskboard-starter/
     ├── SKILL.md              ← WorkBuddy 读取的入口
@@ -263,8 +264,31 @@ python .github\scripts\check-docs.py            :: 2. 体检，退出码 0 才�
 其中「大小写」只在 CI 上才抓得准 —— Windows 本地不区分大小写、GitHub 跑在 Linux 上区分，
 所以「本地全对、线上全 404」是常态。
 
-这两道关都挂在 CI 上：`.github/workflows/check-docs.yml` 每次推送与 PR 都跑，
-`pages.yml` 在部署前也会先跑一遍 —— **坏文档上不了线**。
+### 改安装器（`references/setup/`）的规矩
+
+安装器也是「模板 → 产物」的关系，而且是**别人装到机器上的东西**，改错了代价更大：
+
+```bat
+python .github\scripts\check-setup.py                  :: 改完先体检，退出码 0 才提交
+python .github\scripts\check-setup.py --update-snapshots  :: 模板确实改了：刷 expected/ 基线
+```
+
+`expected/*.rendered.txt` 是 24 份渲染基线。**改了模板或 `render.py` 却没刷基线，体检会报「有漂移」**
+—— 因为陌生人装出来的东西，就不再是这份被测过的版本了。
+
+| 硬约束 | 为什么 |
+|---|---|
+| 模板占位符**只能**用 `{{UPPER_SNAKE}}` 且必须是已知键 | `render()` 的正则只认大写蛇形；写成 `{{ port }}` 会**原样留在产物里**，服务起不来 |
+| 空的 origin 配置**必须**仍有 `set` 语句 | 少一行 `set` 会让变量继承父进程 —— 真机上会变成 403 或静默失效 |
+| `.cmd` 模板必须**纯 ASCII** | 中文注释在非中文代码页下是乱码，批处理会直接跑飞 |
+| 模板改了**必须**刷快照 | 否则基线失效，回归检测形同虚设（等于关掉了这道关） |
+
+`check-setup.py` 一共九组判据，含**模板占位符键白名单**与**快照孤儿**（删了模板忘删基线）。
+
+### 三道关都在 CI 上
+
+`.github/workflows/check-docs.yml` 每次推送与 PR 都跑**两个**体检器（文档 + 安装器）；
+`pages.yml` 在部署前再跑一遍文档体检 —— **坏文档上不了线**。
 
 > **文档直达**：[SKILL.md](workbuddy-taskboard-starter/SKILL.md) ·
 > [usage-guide.md](workbuddy-taskboard-starter/references/usage-guide.md) ·

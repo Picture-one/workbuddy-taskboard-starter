@@ -25,6 +25,15 @@ name: Deploy usage guide to Pages
 on:
   push:
     branches: [main]
+    # 只列**本 workflow 真正读取的东西**，别图省事写一堆：
+    #   * usage-guide.html  —— 要发布的产物
+    #   * check-docs.py     —— 部署闸门，它一变，判据就可能变
+    #   * pages.yml         —— 自己
+    # 刻意**不含** `usage-guide.md`：md 改了没重建，`check-docs.py` 的构建溯源项
+    # 会在 `Check docs` 里报错（且本 workflow 也会因 html 未变而不触发）——
+    # 这是想要的行为，**不要**为了"更保险"把 md 加进来。
+    # 也**不含** `check-setup.py` / setup 目录：安装器模板不在这里发布，
+    # 它的守卫在 `check-docs.yml` 里独立跑；混进来只会让无关改动触发重新部署。
     paths:
       - "workbuddy-taskboard-starter/references/usage-guide.html"
       - ".github/workflows/pages.yml"
