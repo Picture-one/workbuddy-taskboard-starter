@@ -116,13 +116,17 @@ python workbuddy-taskboard-starter\references\setup\install.py
 > —— 讲的是**怎么用它提高科研效率**：优点与边界、任务粒度、每日节奏、邮件指令、
 > 以及怎么让 agent 替你管任务。
 >
-> 🌐 **在线版（推荐，打开就是网页）**：<https://picture-one.github.io/workbuddy-taskboard-starter/>
+> 三个入口，按需选：
 >
-> 📄 同目录另有一份**单文件 HTML 版**：
-> [usage-guide.html](workbuddy-taskboard-starter/references/usage-guide.html)（自包含、可离线打开、可打印成 PDF）。
-> ⚠️ **GitHub 永远不会把 `.html` 渲染成网页** —— 无论 blob 页还是 raw 链接都只显示源码
-> （raw 恒返回 `text/plain` + `nosniff`）。所以它**只能下载后本地打开**：点上面的链接 → 右上角
-> 「Download raw file」→ 双击用浏览器打开；或直接用上面的在线版。
+> | 想干什么 | 去哪儿 |
+> |---|---|
+> | 直接看（推荐） | 🌐 **在线版**：<https://picture-one.github.io/workbuddy-taskboard-starter/> |
+> | 存一份 / 打印 PDF / 离线看 | 📄 **单文件 HTML**：<https://picture-one.github.io/workbuddy-taskboard-starter/usage-guide.html> |
+> | 在 GitHub 上读、引用行号 | 📝 **Markdown 源**：[usage-guide.md](workbuddy-taskboard-starter/references/usage-guide.md) |
+>
+> ⚠️ **别指望 GitHub 渲染 `.html`** —— 这是平台固定策略，不是链接坏了：
+> blob 页只显示源码，`raw` 链接恒返回 `text/plain` + `nosniff`，浏览器永远不会把它当网页。
+> 所以单文件 HTML 的入口指向 Pages（上面的第二个链接），**不要**用仓库内 blob 链接去打开它。
 >
 > 下面只是命令层面的速查。
 
@@ -214,11 +218,18 @@ workbuddy-taskboard-starter/
 ├── README.md                 ← 你正在看的
 ├── LICENSE                   ← MIT（仅覆盖本仓库自有代码）
 ├── NOTICE                    ← 上游致谢与「不重分发」声明
+├── .github/
+│   ├── workflows/
+│   │   ├── check-docs.yml    ← 文档体检（每次推送 / PR 都跑）
+│   │   └── pages.yml         ← 把使用说明发到 Pages（**部署前先体检**）
+│   └── scripts/
+│       ├── check-docs.py     ← 体检器：判据与白名单都在这一个文件里
+│       └── build-usage-guide.py ← 从 .md 构建单文件 .html（自动注入溯源指纹）
 └── workbuddy-taskboard-starter/
     ├── SKILL.md              ← WorkBuddy 读取的入口
     └── references/
-        ├── usage-guide.md    ← ★ 使用说明（怎么用这个看板干活）
-        ├── usage-guide.html  ← ★ 同上的单文件 HTML 版（下载后双击打开 / 打印 PDF）
+        ├── usage-guide.md    ← ★ 使用说明的**源**（手写；改内容改这里）
+        ├── usage-guide.html  ← ★ 构建产物（**别手改**；改完 .md 必须重建）
         ├── setup/            ← 安装器（install.py / render.py / scan-secrets.py + 模板）
         ├── remote-access.md  ← 手机 / 外网访问
         ├── autostart.md      ← 开机自启与判定方法
@@ -227,9 +238,37 @@ workbuddy-taskboard-starter/
         └── troubleshooting.md
 ```
 
+---
+
+## 改文档的规矩（重要）
+
+使用说明有**两个形态**：手写的 [usage-guide.md](workbuddy-taskboard-starter/references/usage-guide.md)（**源**）
++ 构建出的 [usage-guide.html](https://picture-one.github.io/workbuddy-taskboard-starter/usage-guide.html)（**产物**，也提交进仓库）。
+产物入库是为了能发布到 Pages，代价是会出现**漂移**：改了 `.md` 忘了重建，线上就是旧内容 ——
+而且**不会报任何错**。所以规矩是固定的两条：
+
+```bat
+pip install markdown
+python .github\scripts\build-usage-guide.py     :: 1. 改完 .md 就重建 HTML
+python .github\scripts\check-docs.py            :: 2. 体检，退出码 0 才提交
+```
+
+| 硬约束 | 为什么（这条是踩过坑的） |
+|---|---|
+| 跨文档引用**必须**写成真链接 `[显示名](相对路径)` | 用反引号包住文件名（形如把 `某文档.md` 包进反引号）在 GitHub 上**点了没反应**，而且不产生 404、不报错、CI 也不红 —— 视觉上和真链接几乎没差别，只能靠人反馈或扫描发现 |
+| 改完 [usage-guide.md](workbuddy-taskboard-starter/references/usage-guide.md) **必须**重建 [usage-guide.html](https://picture-one.github.io/workbuddy-taskboard-starter/usage-guide.html) | 生成的 HTML 里内嵌了源文件的 `sha256`。对不上，体检的「构建溯源」项就会失败 |
+| 生成的 HTML 里**不许**出现外部资源 | 装 skill 的机器常是断网的，外链必断。CSS / 图一律内联 |
+
+`check-docs.py` 一共查六项：**伪链接 / 断链 / 大小写 / 锚点 / 构建溯源 / 自包含**。
+其中「大小写」只在 CI 上才抓得准 —— Windows 本地不区分大小写、GitHub 跑在 Linux 上区分，
+所以「本地全对、线上全 404」是常态。
+
+这两道关都挂在 CI 上：`.github/workflows/check-docs.yml` 每次推送与 PR 都跑，
+`pages.yml` 在部署前也会先跑一遍 —— **坏文档上不了线**。
+
 > **文档直达**：[SKILL.md](workbuddy-taskboard-starter/SKILL.md) ·
 > [usage-guide.md](workbuddy-taskboard-starter/references/usage-guide.md) ·
-> [usage-guide.html](workbuddy-taskboard-starter/references/usage-guide.html)（**需下载后打开**）·
+> [usage-guide.html 在线阅读](https://picture-one.github.io/workbuddy-taskboard-starter/usage-guide.html) ·
 > [remote-access.md](workbuddy-taskboard-starter/references/remote-access.md) ·
 > [autostart.md](workbuddy-taskboard-starter/references/autostart.md) ·
 > [mail-bridge.md](workbuddy-taskboard-starter/references/mail-bridge.md) ·

@@ -6,9 +6,17 @@
 #   想让「一个点开就能看的使用说明」存在，只能走 Pages。
 #
 # 站点地址：https://picture-one.github.io/workbuddy-taskboard-starter/
+#   /                    → 渲染好的网页（浏览器直接看）
+#   /usage-guide.html    → 同一份单文件 HTML（可右键另存 / 可打印 PDF / 可离线）
+#     ↑ 这两个是**同一个文件**。放两份是为了让「在线阅读」和「下载留档」
+#       都有各自能用的 URL —— 否则下载入口只能指向 GitHub raw，而 raw 是 text/plain。
 #
 # ⚠️ 这里发布的必须是**已脱敏**的仓库通用版 `usage-guide.html`。
 #    本机详细版（含真实项目名与绝对路径）在 `~/.workbuddy/docs/` 下，**绝不发布**。
+#
+# ⚠️ 部署前**先跑文档体检**（fail-safe）：文档有问题就不部署，
+#    线上停留在上一个已知良好的版本，而不是把坏文档推上去。
+#    同样的检查也在 `check-docs.yml` 里独立跑一遍，好让 PR 上有明确反馈。
 #
 # 本 workflow 跑在 ubuntu-latest 上，与本机 Windows 环境无关。
 
@@ -20,6 +28,7 @@ on:
     paths:
       - "workbuddy-taskboard-starter/references/usage-guide.html"
       - ".github/workflows/pages.yml"
+      - ".github/scripts/check-docs.py"
   workflow_dispatch:
 
 permissions:
@@ -40,10 +49,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 文档体检（不过关就不部署）
+        run: python .github/scripts/check-docs.py
+
       - name: Stage site
         run: |
           mkdir -p _site
           cp workbuddy-taskboard-starter/references/usage-guide.html _site/index.html
+          cp workbuddy-taskboard-starter/references/usage-guide.html _site/usage-guide.html
 
       - uses: actions/configure-pages@v5
 

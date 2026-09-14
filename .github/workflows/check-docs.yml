@@ -1,0 +1,40 @@
+# 文档守卫：每次推送 / PR 都体检一遍文档。
+#
+# 为什么需要它
+# ------------
+# 本仓库出过一次「使用说明点不开」的事故。复盘确认病因是三类**不会自己报错**的缺陷：
+#   * 反引号伪链接 —— `` `usage-guide.md` `` 在 GitHub 上点了没反应（没有 404、没有 CI 失败）
+#   * HTML 与 Markdown 静默漂移 —— 改了 .md 忘了重建，线上静默展示旧内容
+#   * 大小写不符 —— 本地 Windows 不区分、GitHub 跑 Linux 区分 → 本地全对、线上全 404
+# 这类问题靠人眼复查防不住（已经失败过一次），所以把判据固化成脚本挂到 CI 上。
+#
+# 判据与白名单都在 `.github/scripts/check-docs.py` 里，本 workflow 只负责跑它。
+# 该脚本**零第三方依赖**（纯标准库），所以这里不需要 pip install。
+#
+# 在 Actions 日志里，问题会以 ::error file=...,line=...:: 的形式输出，
+# 直接标注在「Files changed」页对应的那一行上。
+
+name: Check docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 文档体检（伪链接 / 断链 / 大小写 / 锚点 / 构建溯源 / 自包含）
+        run: python .github/scripts/check-docs.py
