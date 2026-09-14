@@ -105,7 +105,7 @@
 | 手机（配了 Tailscale 后） | `https://<机器名>.<tailnet>.ts.net` |
 
 > 走域名访问时，回环专属端点（`/api/local/*`、WebSocket `/api/events`）会返回 **409** ——
-> 这是设计如此，不是故障。详见 `remote-access.md`。
+> 这是设计如此，不是故障。详见 [remote-access.md](remote-access.md)。
 
 ---
 

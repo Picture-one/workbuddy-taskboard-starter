@@ -304,7 +304,7 @@ taskctl context current --json
 **只有命令能做、界面做不了的**：层级树 · 目录映射 · 附件批量导出 ·
 `archived` 三态筛选 · 评论游标增量读 · 显式 `--if-version`。
 
-> `taskctl` 的具体调用方式（包装脚本位置、固定路径写法）见 `local-layout.md`。
+> `taskctl` 的具体调用方式（包装脚本位置、固定路径写法）见 [local-layout.md](local-layout.md)。
 
 ---
 
@@ -372,4 +372,4 @@ taskctl context current --json
 
 > **一个静默失败模式**：如果哪天「邮件照发、微信却毫无提醒」，几乎一定是微信侧的
 > **「QQ邮箱提醒」**出了问题（开关被关 / 绑定失效 / 装了 QQ邮箱 App 并开了「仅在客户端提醒」）。
-> 上行链路是**静默**的，不会有任何报错。详见 `mail-bridge.md`。
+> 上行链路是**静默**的，不会有任何报错。详见 [mail-bridge.md](mail-bridge.md)。

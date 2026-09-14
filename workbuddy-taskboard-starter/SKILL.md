@@ -89,7 +89,7 @@ selfcheck-taskboard.cmd :: 一键自检（只读）
 ```
 
 自检退出码：`0` 通过 / `1` 执行过但不健康 / `2` 本次登录未执行 / `3` 无法判定 / `10` 配置或文件问题。
-详细判据见 `references/autostart.md`。
+详细判据见 [references/autostart.md](references/autostart.md)。
 
 ## 远程访问（手机 / 外网）
 
@@ -104,14 +104,14 @@ tailscale serve --bg --https=443 http://127.0.0.1:47823
 `TRUSTED_ORIGIN`。漂移的症状是「手机 403，而且只在某一路实例上出现」。
 
 完整前置开关（Serve 授权、MagicDNS、HTTPS Certificates）与实测坑位见
-`references/remote-access.md`。
+[references/remote-access.md](references/remote-access.md)。
 
 ## 邮件桥（可选）
 
 上行：SMTP 把当日清单发到你的邮箱 → 微信「QQ邮箱提醒」推送到手机。
 下行：IMAP **只读**拉取你的回复，解析后经 `taskctl` 回写看板。
 
-配置与指令语法见 `references/mail-bridge.md`。
+配置与指令语法见 [references/mail-bridge.md](references/mail-bridge.md)。
 
 ## 不可用能力清单（诚实说明）
 
@@ -145,4 +145,4 @@ tailscale serve --bg --https=443 http://127.0.0.1:47823
 | 手机 403、本机正常 | origin 白名单漂移（两处不一致） | 跑自检，它会逐字符比对并指出不一致 |
 | 面板能开但样式错乱 / 白屏 | 前端没构建（`dist\web` 缺失） | 重跑 `npm ci` + `npm run build:web`，或重跑安装器（幂等） |
 
-更多见 `references/troubleshooting.md`。
+更多见 [references/troubleshooting.md](references/troubleshooting.md)。

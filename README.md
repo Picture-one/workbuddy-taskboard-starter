@@ -49,7 +49,7 @@ taskctl CLI / 邮件桥 ───────────┘
 1. 把本仓库地址贴给 WorkBuddy，说一句：
    > 把这个 starter 装到本机
 2. WorkBuddy 会先把本仓库作为 skill 装进 `~/.workbuddy/skills/workbuddy-taskboard-starter/`，
-   然后读取其中的 `SKILL.md`，按里面的步骤调用自带的安装器。
+   然后读取其中的 [SKILL.md](workbuddy-taskboard-starter/SKILL.md)，按里面的步骤调用自带的安装器。
 3. 安装完成后按提示双击 `start-taskboard.cmd` 即可看到界面。
 
 ### 方式 B：手动跑安装器
@@ -112,12 +112,17 @@ python workbuddy-taskboard-starter\references\setup\install.py
 
 ## 日常使用
 
-> 📖 **完整使用说明（建议先读）**：[`references/usage-guide.md`](workbuddy-taskboard-starter/references/usage-guide.md)
+> 📖 **完整使用说明（建议先读）**：[`workbuddy-taskboard-starter/references/usage-guide.md`](workbuddy-taskboard-starter/references/usage-guide.md)
 > —— 讲的是**怎么用它提高科研效率**：优点与边界、任务粒度、每日节奏、邮件指令、
 > 以及怎么让 agent 替你管任务。
 >
-> 同目录另有一份**单文件 HTML 版** `usage-guide.html`（自包含、可离线打开、可直接打印成 PDF）。
-> ⚠️ GitHub 不渲染 HTML —— **点开后选「Download raw file」，再双击用浏览器打开**。
+> 🌐 **在线版（推荐，打开就是网页）**：<https://picture-one.github.io/workbuddy-taskboard-starter/>
+>
+> 📄 同目录另有一份**单文件 HTML 版**：
+> [usage-guide.html](workbuddy-taskboard-starter/references/usage-guide.html)（自包含、可离线打开、可打印成 PDF）。
+> ⚠️ **GitHub 永远不会把 `.html` 渲染成网页** —— 无论 blob 页还是 raw 链接都只显示源码
+> （raw 恒返回 `text/plain` + `nosniff`）。所以它**只能下载后本地打开**：点上面的链接 → 右上角
+> 「Download raw file」→ 双击用浏览器打开；或直接用上面的在线版。
 >
 > 下面只是命令层面的速查。
 
@@ -221,6 +226,17 @@ workbuddy-taskboard-starter/
         ├── local-layout.md   ← 路径 / 端口 / 命令总表
         └── troubleshooting.md
 ```
+
+> **文档直达**：[SKILL.md](workbuddy-taskboard-starter/SKILL.md) ·
+> [usage-guide.md](workbuddy-taskboard-starter/references/usage-guide.md) ·
+> [usage-guide.html](workbuddy-taskboard-starter/references/usage-guide.html)（**需下载后打开**）·
+> [remote-access.md](workbuddy-taskboard-starter/references/remote-access.md) ·
+> [autostart.md](workbuddy-taskboard-starter/references/autostart.md) ·
+> [mail-bridge.md](workbuddy-taskboard-starter/references/mail-bridge.md) ·
+> [local-layout.md](workbuddy-taskboard-starter/references/local-layout.md) ·
+> [troubleshooting.md](workbuddy-taskboard-starter/references/troubleshooting.md)
+>
+> 上面目录树里的文件名是**纯文本**（代码块内不能放链接），要跳转请用这一行。
 
 ---
 

@@ -1,0 +1,55 @@
+# 把仓库通用版使用说明发布成**在线网页**。
+#
+# 为什么需要这个 workflow：
+#   GitHub 对 `.html` 文件**永远不会**在线渲染 —— blob 页只显示源码，
+#   raw 链接恒返回 `Content-Type: text/plain` + `X-Content-Type-Options: nosniff`。
+#   想让「一个点开就能看的使用说明」存在，只能走 Pages。
+#
+# 站点地址：https://picture-one.github.io/workbuddy-taskboard-starter/
+#
+# ⚠️ 这里发布的必须是**已脱敏**的仓库通用版 `usage-guide.html`。
+#    本机详细版（含真实项目名与绝对路径）在 `~/.workbuddy/docs/` 下，**绝不发布**。
+#
+# 本 workflow 跑在 ubuntu-latest 上，与本机 Windows 环境无关。
+
+name: Deploy usage guide to Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "workbuddy-taskboard-starter/references/usage-guide.html"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage site
+        run: |
+          mkdir -p _site
+          cp workbuddy-taskboard-starter/references/usage-guide.html _site/index.html
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
