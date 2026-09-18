@@ -101,6 +101,14 @@ def gh_slugify(value, separator="-"):
     return s
 
 
+# 不参与体检的子树（仓库相对路径前缀）。
+# board/upstream/ 是**照搬的上游源码**，不是本仓库的文档：它自带自己的文档约定
+# （PRIVACY.md 链到我们未收录的 docs/、web/index.html 与测试夹具是无溯源标记的
+# 上游 HTML）。对 vendored 代码套本仓库的文档规矩，只会逼着我们改上游文件、
+# 让 fork 与原仓库对不上账。board/README.md 是我们自己写的说明，**仍然受检**。
+SKIP_PREFIXES = ("board/upstream/",)
+
+
 # ---------------------------------------------------------------- 收集
 def collect_docs(root):
     """返回仓库内全部 .md/.html 的相对路径（排序后）。"""
@@ -108,8 +116,12 @@ def collect_docs(root):
     for r, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "__pycache__")]
         for f in files:
-            if f.lower().endswith((".md", ".html")):
-                docs.append(os.path.relpath(os.path.join(r, f), root).replace(os.sep, "/"))
+            if not f.lower().endswith((".md", ".html")):
+                continue
+            rel = os.path.relpath(os.path.join(r, f), root).replace(os.sep, "/")
+            if rel.startswith(SKIP_PREFIXES):
+                continue
+            docs.append(rel)
     return sorted(docs)
 
 

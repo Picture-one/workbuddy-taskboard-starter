@@ -5,7 +5,8 @@
 在 Windows 上把一套本地任务面板装进 WorkBuddy：
 
   1. 探测 Node / Python / Tailscale
-  2. 从上游按**固定 tag** 下载 tarball（codeload，免 API 限流）
+  2. 取看板源码：**优先用仓库内自带的 board/upstream/**（本仓库自带源码）；
+     没有才从上游按固定 tag 下载 tarball。--from-upstream 可强制走网络
   3. 剥掉顶层目录、落位到 <prefix>\\apps\\dashi-taskboard
   4. npm ci + npm run build:web   ← 上游 tag 里没有 dist/，不构建就没有界面
   5. 渲染生成外壳脚本（把探测到的绝对路径填进模板）
@@ -47,6 +48,11 @@ DEFAULT_REF = "v1.1.22"
 MIN_NODE = (22, 5)
 RUN_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 UA = "workbuddy-taskboard-starter-installer"
+
+# 仓库内自带的看板源码（相对本文件：references/setup/ -> 仓库根/board/upstream）
+# 存在时**优先使用它**，不再联网下载上游。这是本仓库「自带源码」的落点。
+LOCAL_BOARD_DIR = os.path.abspath(
+    os.path.join(HERE, "..", "..", "..", "board", "upstream"))
 
 # 退出码
 E_OK, E_USAGE, E_PLATFORM, E_NONODE, E_NODEVER = 0, 2, 3, 4, 5
@@ -237,6 +243,28 @@ def port_listening(port, host="127.0.0.1"):
 
 
 # ---------------------------------------------------------------- 2) 下载与解包
+
+def probe_local_board():
+    """探测仓库内自带的看板源码。
+
+    返回 (可用?, 版本, 说明)。判据用 server/index.mjs —— 与主流程后续
+    检查同一个锚点，避免"探测通过但落位后找不到"的不一致。
+    """
+    anchor = os.path.join(LOCAL_BOARD_DIR, "server", "index.mjs")
+    if not os.path.isdir(LOCAL_BOARD_DIR):
+        return False, None, "仓库内无 board/upstream/（正常：旧版仓库无源码）"
+    if not os.path.isfile(anchor):
+        return False, None, "board/upstream/ 存在但缺 server/index.mjs，结构不符"
+    version = None
+    pkg = os.path.join(LOCAL_BOARD_DIR, "package.json")
+    if os.path.isfile(pkg):
+        try:
+            with open(pkg, "r", encoding="utf-8") as handle:
+                version = json.load(handle).get("version")
+        except Exception:
+            version = None
+    return True, version, "仓库内自带源码"
+
 
 def download_tarball(repo, ref, dest_dir):
     os.makedirs(dest_dir, exist_ok=True)
@@ -631,6 +659,8 @@ def parse_args(argv):
                "13 服务起不来")
     parser.add_argument("--repo", default=DEFAULT_REPO, help="上游 owner/name")
     parser.add_argument("--ref", default=DEFAULT_REF, help="上游 tag / 分支 / sha（默认 %s）" % DEFAULT_REF)
+    parser.add_argument("--from-upstream", dest="from_upstream", action="store_true",
+                        help="强制从上游下载，忽略仓库内自带的 board/upstream/（默认优先用自带源码）")
     parser.add_argument("--prefix", default=os.path.join(home, ".workbuddy"),
                         help="安装根目录（隔离旋钮）。默认 %%USERPROFILE%%\\.workbuddy")
     parser.add_argument("--app-dir", default=None)
@@ -761,18 +791,44 @@ def main(argv=None):
         log("  已有同版本安装，跳过下载（要强制重拉就加 --force）")
         upstream_dir = None
     else:
-        try:
-            tarball, url = download_tarball(args.repo, args.ref, tmp_dir)
-            log("  已下载：%s" % url)
-        except Exception as exc:
-            log("!! 下载失败：%r" % (exc,))
-            return E_DOWNLOAD
-        try:
-            top, extracted = extract_upstream(tarball, upstream_dir)
-            log("  已解包：顶层目录 %s，%d 个文件" % (top, len(extracted)))
-        except Exception as exc:
-            log("!! 解包失败：%r" % (exc,))
-            return E_EXTRACT
+        # 优先用仓库内自带源码；没有才联网下载上游。
+        # --from-upstream 可强制走网络（例如想装上游原版而非改造版）。
+        local_ok, local_ver, local_note = probe_local_board()
+        use_local = local_ok and not args.from_upstream
+        if use_local:
+            log("  源码来源：仓库内 board/upstream/（%s）—— 不联网" % local_note)
+            if local_ver:
+                log("  自带版本：%s" % local_ver)
+            if os.path.isdir(upstream_dir):
+                shutil.rmtree(upstream_dir)
+            shutil.copytree(LOCAL_BOARD_DIR, upstream_dir)
+            top = "board/upstream"
+            extracted = set()
+            for dirpath, _dirnames, filenames in os.walk(upstream_dir):
+                for fname in filenames:
+                    extracted.add(os.path.relpath(os.path.join(dirpath, fname),
+                                                  upstream_dir))
+            log("  已就位：%d 个文件" % len(extracted))
+            if local_ver and local_ver != args.ref.lstrip("v"):
+                log("  提示：自带版本 %s 与 DEFAULT_REF %s 不同 —— 属预期（自带版含本机改造）"
+                    % (local_ver, DEFAULT_REF))
+        else:
+            if args.from_upstream:
+                log("  --from-upstream：按参数强制从上游下载")
+            else:
+                log("  %s；回退到上游下载" % local_note)
+            try:
+                tarball, url = download_tarball(args.repo, args.ref, tmp_dir)
+                log("  已下载：%s" % url)
+            except Exception as exc:
+                log("!! 下载失败：%r" % (exc,))
+                return E_DOWNLOAD
+            try:
+                top, extracted = extract_upstream(tarball, upstream_dir)
+                log("  已解包：顶层目录 %s，%d 个文件" % (top, len(extracted)))
+            except Exception as exc:
+                log("!! 解包失败：%r" % (exc,))
+                return E_EXTRACT
         if fresh or not os.path.isfile(os.path.join(app_dir, "server", "index.mjs")):
             os.makedirs(app_dir, exist_ok=True)
             copied, skipped = merge_upstream(upstream_dir, app_dir)

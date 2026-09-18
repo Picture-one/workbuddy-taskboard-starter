@@ -25,3 +25,24 @@ dist/
 # ---- 本机备份 / 残件 ----
 *.bak-*
 *.removed-*
+
+# ---- 看板源码（board/）专属规则 ----
+# 这些是本机产物/残件，绝不应入库。规则刻意限定在 board/ 下，
+# 以免影响 references/setup/ 里的 *.cmd.tpl 模板与 *.rendered.txt 快照。
+board/**/node_modules/
+board/**/dist/
+board/**/.data/
+board/**/.wrangler/
+board/**/.tmp/
+board/**/logs/
+board/**/*.log
+board/**/*.err
+board/**/*.bak-*
+board/**/*.removed-*
+board/**/*.retired-*
+# 本机启动/自检脚本：装了本机绝对路径与真实主机名
+board/**/*.cmd
+board/**/*.pyw
+# 本机备份的源码目录（如 web/src.bak-<时间戳>/）
+board/**/src.bak-*/
+board/**/*.tsbuildinfo
