@@ -62,6 +62,8 @@ import {
 import { BoardColumn } from "./components/BoardColumn";
 import { groupTasksByDay, type DayGroup, type DayGroupingText } from "./boardGrouping";
 import { TodayPushPanel } from "./components/TodayPushPanel";
+import { useBoardZoomGuard } from "./useBoardZoomGuard";
+import { formatZoom } from "./boardZoom";
 import type { AiChatOpenThreadRequest } from "./components/AiChat";
 import {
   BoardCardDisplayMenu,
@@ -2317,6 +2319,10 @@ export function App() {
   const otherTaskTabsKey = otherTaskTabs.join(",");
   const otherTasksAvailable = otherTaskTabs.length > 0;
 
+  // 缩放下限：只在看板视图生效（列表/甘特图的密度诉求不同）。
+  // 板块数越多，要求的尺度越大 —— 达到下限后不再允许继续缩小。
+  const boardZoom = useBoardZoomGuard(mainColumnCount, boardView === "issues");
+
   useEffect(() => {
     if (!otherTasksAvailable) {
       setOtherTasksOpen(false);
@@ -3697,6 +3703,49 @@ export function App() {
                 onChange={updateProjectBoardDisplaySettings}
                 onReset={resetProjectBoardDisplaySettings}
               />
+            )}
+            {boardView === "issues" && (
+              <div className="board-zoom-control" role="group" aria-label={text("看板缩放", "Board zoom")}>
+                <button
+                  type="button"
+                  className="board-zoom-button"
+                  onClick={() => boardZoom.zoomOut()}
+                  disabled={boardZoom.atMinZoom}
+                  aria-label={text("缩小", "Zoom out")}
+                  title={boardZoom.atMinZoom
+                    ? text(
+                      `已达最小尺度 ${formatZoom(boardZoom.minZoom)}（当前 ${mainColumnCount} 个板块）`,
+                      `Minimum scale ${formatZoom(boardZoom.minZoom)} reached (${mainColumnCount} columns)`,
+                    )
+                    : text("缩小", "Zoom out")}
+                >
+                  <span aria-hidden="true">−</span>
+                </button>
+                <button
+                  type="button"
+                  className={`board-zoom-value${boardZoom.clamped ? " is-clamped" : ""}`}
+                  onClick={() => boardZoom.resetZoom()}
+                  aria-label={text("恢复到 100%", "Reset to 100%")}
+                  title={boardZoom.clamped
+                    ? text(
+                      `已限制在最小尺度 ${formatZoom(boardZoom.minZoom)}：${mainColumnCount} 个板块需完整展示，再缩小将无法阅读`,
+                      `Limited to minimum ${formatZoom(boardZoom.minZoom)}: ${mainColumnCount} columns need to stay readable`,
+                    )
+                    : text("点击恢复到 100%", "Click to reset to 100%")}
+                >
+                  {formatZoom(boardZoom.zoom)}
+                </button>
+                <button
+                  type="button"
+                  className="board-zoom-button"
+                  onClick={() => boardZoom.zoomIn()}
+                  disabled={boardZoom.zoom >= 1}
+                  aria-label={text("放大", "Zoom in")}
+                  title={text("放大", "Zoom in")}
+                >
+                  <span aria-hidden="true">＋</span>
+                </button>
+              </div>
             )}
             {boardView === "issues" && otherTasksAvailable && (
               <button

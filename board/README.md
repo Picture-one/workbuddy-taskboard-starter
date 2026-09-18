@@ -22,7 +22,9 @@ board/
 └── upstream/            # 上游代码 + 本机改造（路径与上游仓库同构）
     ├── LICENSE          # Apache-2.0（上游原样，勿删）
     ├── package.json     # 上游 1.1.22 + 本机新增 test:components 脚本
-    ├── web/             # 前端（React + Vite）← 按天分组改造在此
+    ├── web/             # 前端（React + Vite）← 按天分组 / 滚动条 / 缩放下限改造在此
+    │   └── src/         #   boardZoom.ts（下限纯函数）· useBoardZoomGuard.ts（纠偏 hook）
+    │                    #   boardZoom.test.tsx（14 项单测，需 --environment jsdom）
     ├── server/          # 本地 HTTP 服务（node:sqlite）
     ├── shared/          # 前后端共享（任务输入契约、领域常量）
     ├── cli/             # taskctl CLI
@@ -113,6 +115,95 @@ board/
 - 折叠按钮复用其它板块 `.column-actions` 的图标按钮位（图标库无 `chevronUp`，
   用 `chevronDown` 旋转 -90°）。
 - 显示与否由「更多显示设置」里的 **`showTodayPanel`** 开关控制。
+
+## 滚动条：能滚不等于能拖
+
+**原来的问题**：浏览器缩放（Ctrl+滚轮）放大后右侧板块被推出视野，**只能用方向键，鼠标拖不动**。
+
+排查发现这不是「滚动能力」缺失 —— 实测 2x 缩放下 `.board-scroll` 的横向可滚上限有 **832px**，
+滚动能力一直在。真正的原因是 `styles.css` 把它的滚动条**彻底隐藏**了：
+
+```css
+/* 修复前 —— 有滚动能力，但没有抓手 */
+.board-scroll { scrollbar-width: none; }
+.board-scroll::-webkit-scrollbar { display: none; }
+```
+
+**判据**：`scrollWidth - clientWidth > 0` 只说明「能滚」；要判断「有没有抓手」，得看
+**滚动条 gutter** = `offsetHeight - clientHeight`（横） / `offsetWidth - clientWidth`（纵）。
+`> 0` 才是传统占位式滚动条（可抓），`= 0` 是 overlay 式或不存在。
+
+**现在的规则**（三处滚动条各自由专属规则显式恢复，都用细滚动条常驻）：
+
+| 容器 | 滚动条 | 对应体验 |
+|---|---|---|
+| `.board-scroll` | 横向 + 纵向均可见 | 右侧被遮挡的板块（横向拖动）、纵向内容超出（底部拖动） |
+| `.board-column` / `.column-list` | 纵向可见 | 列内任务过多时的「底部滚动条」 |
+| `.other-tasks-list` | 保持隐藏 | 它在自适应宽度的侧栏里，多一条滚动条会挤压卡片 |
+
+同时 `.board-scroll` 的 `overflow-y` 从 `hidden` 改为 `auto` ——
+祖先链（`.layout` / `.workspace` / `.app-shell` / `body`）全是 `overflow: hidden`，
+纵向原本**根本没有任何滚动入口**，所以纵向是真的拖不动，不全是滚动条的问题。
+
+⚠️ 改滚动条时**必须两处一起改**：`scrollbar-width`（标准属性）与
+`::-webkit-scrollbar`（WebKit 伪元素）。只改一个，滚动条仍然不显示。
+
+⚠️ 删除任何一处 `display: none` 前，先确认没有**另一个同优先级、位置更靠后**的规则
+仍在把它盖回去 —— 我这次就踩到：把 `.board-scroll` 从隐藏组移除后，前面一段旧块
+以同优先级 `display: none` 覆盖了新规则，表现为「规则写了却没生效」。
+
+**实测**（`_build/verify_scrollbar_drag.mjs`，18 PASS / 0 FAIL）：
+
+| 缩放 | 滚动条 gutter | 滚轮可滚 | 可达最右 |
+|---|---|---|---|
+| 1.25x | 10px, `display: block` | 0 → 352（满） | 352/352 ✓ |
+| 1.5x | 10px, `display: block` | 0 → 400 | 565/565 ✓ |
+| 2x | 10px, `display: block` | 0 → 400 | 832/832 ✓ |
+
+几何实测（`.board` 有 `min-width`，缩放**不会**压窄板块，列宽恒 300px、总宽恒 1596px）：
+
+| 缩放 | CSS 视口 | 容器宽 | 横向可滚上限 | 被推出视野的列数 |
+|---|---|---|---|---|
+| 1x | 1600×900 | 1564 | 32px | 1 |
+| 1.25x | 1280×720 | 1244 | 352px | 2 |
+| 1.5x | 1067×600 | 1031 | 565px | 2 |
+| 2x | 800×450 | 764 | 832px | 3 |
+
+## 缩放下限：按板块数动态计算
+
+**原来的问题**：显示 6 个板块时字号已经偏小，但继续缩小仍显示 6 个板块、字号继续变小，
+没有任何下限。
+
+**先说清一个语义**：缩放**缩小**会**增大**可用 CSS 宽度，所以「看不全」从来不是缩小的后果 ——
+缩小的真正害处是**字号小到不可读**。所以下限按**可读性门槛**定，不按宽度定。
+
+**规则**（`web/src/boardZoom.ts`，纯函数、可单测）：
+
+| 常量 | 值 | 含义 |
+|---|---|---|
+| `ABSOLUTE_MIN_ZOOM` | `0.7` | 绝对下限：再低 11px 正文只剩 ~7.7px |
+| `COMFORTABLE_COLUMN_COUNT` | `4` | 4 列以内允许缩到绝对下限 |
+| `ZOOM_STEP_PER_EXTRA_COLUMN` | `0.05` | 每多 1 列抬高 5% |
+| `MAX_ZOOM` | `1` | 上限 100%，**绝不要求用户放大**（那会反过来遮挡） |
+
+下限表（板块数 1..9）：**70% → 70% → 70% → 70% → 75% → 80% → 85% → 90% → 95%**
+
+⚠️ `Infinity` 要单独拦：`Number.isFinite(Infinity)` 为 `false`，若直接落到「按 1 列处理」的
+兜底，会得出「板块无穷多却允许缩到最小」的反直觉结果。
+
+**浏览器缩放的固有约束**：`Ctrl+滚轮` / `Ctrl+±` 由宿主（WorkBuddy webview / Chrome）
+直接处理，**不经过页面 JS，无法被 `preventDefault()` 拦下**。所以「不允许继续缩小」只能做成
+**越界即纠偏 + 提示**，不能做成硬拦截。纠偏优先级（`web/src/useBoardZoomGuard.ts`）：
+
+1. `webFrame.setZoomFactor`（Electron / WorkBuddy 注入的接口）
+2. `document.body.style.zoom`
+3. 都不可用 → **仅提示，不静默失败**
+
+UI 上给一个显式入口：`−  100%  ＋`（`.board-zoom-control`），到下限时 `−` 置灰、
+比例文字高亮（`.is-clamped`），让「已经缩不动了」可见。
+
+⚠️ `devicePixelRatio` 叠加了系统 DPI 缩放（125% / 150%），必须以**首次挂载时的 DPR 为基准**
+算相对缩放，否则会把「系统 DPI」误判成「用户缩放」而误报下限。
 
 ## 构建
 

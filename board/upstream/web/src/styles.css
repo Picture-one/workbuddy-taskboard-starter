@@ -7543,6 +7543,70 @@ kbd {
   line-height: 1.5;
 }
 
+/* ===== 看板缩放控件 =====
+   浏览器缩放（Ctrl+滚轮）本身由宿主处理，页面拦不住；这里的按钮提供
+   「可点、有反馈、到下限会禁用」的显式入口，并展示当前比例与下限。 */
+.board-zoom-control {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: var(--border-hairline) solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.board-zoom-button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.board-zoom-button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* 触底后置灰：这是「达到该尺度后不再允许继续缩小」的视觉表达。 */
+.board-zoom-button:disabled {
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.board-zoom-value {
+  min-width: 40px;
+  height: 22px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.board-zoom-value:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* 被纠偏到下限时高亮，提示「已经缩不动了」。 */
+.board-zoom-value.is-clamped {
+  color: var(--warning);
+  font-weight: 550;
+}
+
 .issue-board-layout {
   --panel-spring: linear(
     0,
@@ -7603,10 +7667,17 @@ kbd {
   min-width: 0;
   min-height: 0;
   padding: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-x: contain;
+  /* 双向滚动：横向仍是「列多了就横滑」，纵向放开是为了在浏览器缩放
+     （Ctrl+滚轮）后内容高度超出视口时，鼠标能往下拖 —— 原为
+     `overflow-y: hidden`，而祖先链（layout / workspace / app-shell / body）
+     全是 overflow:hidden，导致纵向根本没有任何滚动入口，
+     只能用方向键，鼠标拖不动。 */
+  overflow: auto;
+  /* 两个方向都独立吸附，避免纵向滚动带动横向跳动。 */
+  overscroll-behavior: contain;
   background: transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: thin;
 }
 
 .board {
@@ -7618,6 +7689,46 @@ kbd {
   height: 100%;
   min-height: 0;
   gap: 24px;
+}
+
+/* ===== .board-scroll 的滚动条（必须可见） =====
+   这是「放大后右侧板块被遮挡」的唯一抓手：滚动能力一直在，缺的是可见滚动条。
+   恢复为常驻的细滚动条（非 overlay），保证鼠标能直接抓住拖动。 */
+.board-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.board-scroll::-webkit-scrollbar {
+  display: block;
+  width: 10px;
+  height: 10px;
+  background: transparent;
+}
+
+.board-scroll::-webkit-scrollbar-track,
+.board-scroll::-webkit-scrollbar-track-piece,
+.board-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.board-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.board-scroll::-webkit-scrollbar-thumb {
+  min-width: 30px;
+  min-height: 30px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.board-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
 }
 
 .board-column {
@@ -8529,17 +8640,73 @@ kbd {
   padding: 0 8px 12px;
 }
 
-.board-scroll,
+/* 板块列内的纵向滚动条（用户说的「底部滚动条」）。
+   这些容器一直是 `overflow-y: auto`、能滚，但滚动条被隐藏 → 只看得见右边被截断，
+   却没有任何抓手。改为细滚动条常驻；`other-tasks-list` 保持隐藏（它在
+   自适应宽度的侧栏里，多一条滚动条会挤压卡片）。 */
 .board-column,
-.column-list,
+.column-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
 .other-tasks-list {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 
-.board-scroll::-webkit-scrollbar,
 .board-column::-webkit-scrollbar,
-.column-list::-webkit-scrollbar,
+.column-list::-webkit-scrollbar {
+  display: block;
+  width: 10px;
+  height: 10px;
+  background: transparent;
+}
+
+.board-column::-webkit-scrollbar-track,
+.board-column::-webkit-scrollbar-track-piece,
+.board-column::-webkit-scrollbar-corner,
+.column-list::-webkit-scrollbar-track,
+.column-list::-webkit-scrollbar-track-piece,
+.column-list::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.board-column::-webkit-scrollbar-button,
+.column-list::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.board-column::-webkit-scrollbar-thumb,
+.column-list::-webkit-scrollbar-thumb {
+  min-width: 30px;
+  min-height: 30px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.board-column::-webkit-scrollbar-thumb:hover,
+.column-list::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+.other-tasks-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* 注意：这里**不含** `.board-scroll`。
+   它曾被一并隐藏滚动条（同组 `scrollbar-width: none` + `::webkit-scrollbar{display:none}`），
+   结果是：缩放放大后右侧板块被推出可视范围，滚动能力其实存在
+   （实测可滚上限 x 达 832px），但**没有任何滚动条可抓**，
+   鼠标拖不动、只能按方向键 —— 这正是用户报的问题。
+   修复：`.board-scroll` / `.board-column` / `.column-list` 三者的滚动条
+   已各自由上方专属规则显式恢复；只有 `.other-tasks-list` 继续隐藏。 */
 .other-tasks-list::-webkit-scrollbar {
   display: none;
   width: 0;
