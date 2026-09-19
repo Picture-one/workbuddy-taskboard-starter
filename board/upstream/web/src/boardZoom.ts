@@ -34,10 +34,15 @@ export const MIN_COLUMN_WIDTH = 300;
 export const COLUMN_GAP = 24;
 
 /**
- * 绝对下限：任何情况下都不允许缩到 70% 以下。
- * 低于此值时 11px 的正文字号只剩约 7.7px，肉眼已难辨认。
+ * 绝对下限：任何情况下都不允许缩到 75% 以下。
+ * 低于此值时 12px 的正文字号只剩 9px 以下，肉眼已难辨认。
+ *
+ * 2026-09-18：由 0.70 上调至 0.75。原因是正文字号从 11px 抬到 12px 后，
+ * 「可读性门槛」对应的缩放也必须同步抬高 —— 二者是同一个约束的两面：
+ * 改动字号却不动下限，等于把之前修好的问题重新放回来。
+ * 详见 boardZoom.test.tsx 的「字号 × 缩放下限联动」断言。
  */
-export const ABSOLUTE_MIN_ZOOM = 0.7;
+export const ABSOLUTE_MIN_ZOOM = 0.75;
 
 /** 缩放上限（=100%）。保留放大余量，绝不阻止用户放大。 */
 export const MAX_ZOOM = 1;
@@ -113,8 +118,42 @@ export function isAtOrBelowMinZoom(currentZoom: number, minZoom: number, toleran
   return currentZoom <= minZoom + tolerance;
 }
 
-/** 供 UI 展示：`0.7` → `"70%"`。 */
+/** 供 UI 展示：`0.75` → `"75%"`。 */
 export function formatZoom(zoom: number): string {
   const pct = Math.round((Number.isFinite(zoom) ? zoom : 1) * 100);
   return `${pct}%`;
+}
+
+/**
+ * body 路径缩放时写入 `<html>` 的布局补偿变量名。
+ *
+ * ## 为什么需要补偿（2026-09-18 底部空白带的根因）
+ *
+ * `document.body.style.zoom = z` 会把**整个 body 的渲染尺寸**乘以 z，
+ * 但 CSS 视口不会跟着变 —— 于是 `height: 100vh` 的 `.app-shell` 渲染后只有
+ * `z × 100vh`，底部留下 `(1−z)×视口高` 的空白带（右侧同理）。
+ * 更糟的是方向反了：缩放的本意是「缩小内容、容纳更多板块」，
+ * 而 shell 变窄反而让可用 CSS 宽度**变小**。
+ *
+ * 补偿：shell 的布局尺寸改为 `100vh × (1/z)`，渲染后 = z × 100vh/z = 恰好铺满视口。
+ * 布局可用 CSS 尺寸变为 `视口/z` —— 与浏览器缩小的语义完全一致。
+ *
+ * 用「乘以 1/z」而不是「除以 z」：CSS calc 对变量做除法的兼容性更弱，乘法无歧义。
+ */
+export const APP_ZOOM_LAYOUT_VAR = "--app-zoom-layout";
+
+/**
+ * 计算body 路径缩放要写的两个值：body 的内联 zoom 与补偿变量。
+ * 返回 `null` 表示「移除该属性」（复位到 100% 时必须移除而不是写 "1"，
+ * 否则会留下永远清不掉的内联痕迹 —— 2026-09-18 的残留空白带正源于此）。
+ */
+export function bodyZoomDeclaration(target: number): {
+  zoom: string | null;
+  layoutVar: string | null;
+} {
+  if (!Number.isFinite(target) || target >= 0.9995) {
+    return { zoom: null, layoutVar: null };
+  }
+  const clamped = Math.min(Math.max(target, 0.1), 5);
+  return { zoom: String(clamped), layoutVar: String(1 / clamped) };
 }

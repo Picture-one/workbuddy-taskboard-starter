@@ -80,10 +80,38 @@ function memoryConfigStore(overrides = {}) {
   };
 }
 
+/**
+ * 挑选一个「服务端认可的可信局域网」IPv4 地址。
+ *
+ * ⚠️ 为什么不能简单取「第一个非 internal 的 IPv4」（2026-09-19 实测）：
+ * 本机装了 Tailscale，它给虚拟网卡分配的是 **CGNAT 段 100.64.0.0/10**（如 `100.127.110.62`），
+ * 而服务端 `isTrustedNetworkHost()` 的可信口径是 `127 / 10 / 172.16-31 / 192.168 / 169.254`。
+ * 取到 100.x 时，请求还没走到本用例要验的 `assertLoopbackRequest`，
+ * 就在 `assertTrustedNetworkRequest` 被 403 **INVALID_HOST** 拦下了。
+ * 那不是被测代码的 bug，是**探针选错了地址**。
+ *
+ * 这里不改成放宽服务端白名单：100.64/10 是运营商共享地址空间，
+ * 把它整体纳入「可信局域网」是**安全策略变更**，不该由一个网络可达性用例夹带落地。
+ * 需要让 Tailscale 地址可访问时，应显式配置 `TRUSTED_ORIGINS` 环境变量（有专门的测试用例覆盖）。
+ */
+function isPrivateLanAddress(address) {
+  const octets = address.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part))) return false;
+  return (
+    octets[0] === 10
+    || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+    || (octets[0] === 192 && octets[1] === 168)
+    || (octets[0] === 169 && octets[1] === 254)
+  );
+}
+
 function firstLanAddress() {
-  return Object.values(os.networkInterfaces())
+  const candidates = Object.values(os.networkInterfaces())
     .flat()
-    .find((entry) => entry?.family === "IPv4" && !entry.internal)?.address ?? null;
+    .filter((entry) => entry?.family === "IPv4" && !entry.internal);
+  // 优先取服务端白名单内的私有地址；一个都没有时退回任意非回环地址（交由用例决定是否 skip）。
+  const chosen = candidates.find((entry) => isPrivateLanAddress(entry.address)) ?? candidates[0];
+  return chosen?.address ?? null;
 }
 
 test("cloud config persists Basic Auth credentials and device mappings in a mode-0600 file", async () => {

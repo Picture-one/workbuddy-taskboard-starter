@@ -169,6 +169,63 @@ board/
 | 1.5x | 1067×600 | 1031 | 565px | 2 |
 | 2x | 800×450 | 764 | 832px | 3 |
 
+### 再进一步：6px 与「`scrollbar-width` 复位定律」
+
+滚动条找回来了，但 10px 占位偏宽，要求再减细到 6px。
+第一版只把 `::-webkit-scrollbar { width }` 改成 `6px` —— **完全无效**：gutter 纹丝不动，
+可见条反而因为 thumb 边框变窄从 4px 变粗到 8px。
+
+实测（`_build/diag_phase3_gutter.mjs` / `diag_phase3_legacy.mjs`，Chrome 152）：
+
+> **滚动条占位宽度只由标准属性 `scrollbar-width` 决定**（`thin`=10px / `auto`=15px / `none`=0）。
+> 只要元素上声明了 `scrollbar-width` / `scrollbar-color`，legacy 的
+> `::-webkit-scrollbar { width }` 对**布局**就完全无效 ——
+> `getComputedStyle` 会如实回报 6px，但 gutter 恒为 10px。
+
+| 组合 | gutter |
+|---|---|
+| `thin` + webkit `6px` | 10px ❌ |
+| `thin` + webkit `4px` | 10px ❌ |
+| `thin` + webkit `14px` | 10px ❌ |
+| `auto` + `auto` + webkit `6px` | **6px ✓** |
+| `auto` + `auto` + webkit `14px` | 14px ✓ |
+| `none` | 0 |
+
+所以要拿到 6px，必须**先把两个标准属性显式复位为 `auto`**，让 legacy 尺寸重新接管：
+
+```css
+.board-scroll {
+  scrollbar-width: auto;   /* ⚠️ 不是笔误，别改回 thin */
+  scrollbar-color: auto;
+}
+.board-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.board-scroll::-webkit-scrollbar-thumb { border: 1px solid transparent; } /* 可见条 = 6−2 = 4px */
+```
+
+- **副作用已评估**：本文件由 `*` 规则给所有元素统一声明了 `scrollbar-width: thin`，
+  这里改成 `auto` **不会**被后代继承放大 —— 后代仍各自命中 `*`。
+- **风险与兜底**：若未来 Chromium 彻底移除 legacy 伪元素，这里会退化成 `auto` 的 15px。
+  届时改回 `thin`（10px）即可 —— 比 15px 好，且仍然可抓。
+- **防回归**：验收探针里有一条**前置条件断言**（`scrollbar-width === "auto"` 且
+  `scrollbar-color === "auto"`）。只断言 `gutter === 6` 是不够的 ——
+  将来有人改回 `thin` 时，gutter 会变成 10px，若探针只查「能否滚动」就会给出假绿灯。
+
+### 三级可见度：静息很淡，靠近才清楚
+
+6px 的条很难被鼠标发现，要求「保留但变淡，hover 变清楚」。三档变量：
+
+| 变量 | 浅色 | 深色 | 触发时机 |
+|---|---|---|---|
+| `--scrollbar-thumb` | 0.15 | 0.15 | 静息 |
+| `--scrollbar-thumb-soft` | 0.28 | 0.32 | **指针进入容器**（预热） |
+| `--scrollbar-thumb-hover` | 0.46 | 0.50 | 指针压在条上 |
+
+中间那档是关键：条只有 6px，**要求用户精确命中才给反馈等于没有反馈**。
+所以指针进入 `.board-scroll` / 任一板块列就先提亮，真正压到条上再加深。
+
+`.other-tasks-list` 保持 `scrollbar-width: none` —— 它在自适应宽度的侧栏里，
+任何占位都会挤压卡片；而且 `none` 才能彻底去掉占位，**不能**改用这里的 `auto` + legacy 写法。
+
 ## 缩放下限：按板块数动态计算
 
 **原来的问题**：显示 6 个板块时字号已经偏小，但继续缩小仍显示 6 个板块、字号继续变小，
@@ -181,12 +238,19 @@ board/
 
 | 常量 | 值 | 含义 |
 |---|---|---|
-| `ABSOLUTE_MIN_ZOOM` | `0.7` | 绝对下限：再低 11px 正文只剩 ~7.7px |
+| `ABSOLUTE_MIN_ZOOM` | `0.75` | 绝对下限：低于此值时 12px 正文只剩 <9px |
 | `COMFORTABLE_COLUMN_COUNT` | `4` | 4 列以内允许缩到绝对下限 |
 | `ZOOM_STEP_PER_EXTRA_COLUMN` | `0.05` | 每多 1 列抬高 5% |
 | `MAX_ZOOM` | `1` | 上限 100%，**绝不要求用户放大**（那会反过来遮挡） |
 
-下限表（板块数 1..9）：**70% → 70% → 70% → 70% → 75% → 80% → 85% → 90% → 95%**
+下限表（板块数 1..9）：**75% → 75% → 75% → 75% → 80% → 85% → 90% → 95% → 100%**
+
+⚠️ **字号与下限联动**（2026-09-18 由 `0.70` 上调至 `0.75`）：正文从 11px 抬到 12px 后，
+「可读性门槛」对应的缩放必须同步抬高 —— 二者是同一个约束的两面：
+```
+下限 ≥ 最小可读字号 / 正文字号 = 9px / 12px = 0.75
+```
+改字号却不抬下限，等于把之前修好的问题重新放回来。`boardZoom.test.tsx` 里有这条断言的直接编码。
 
 ⚠️ `Infinity` 要单独拦：`Number.isFinite(Infinity)` 为 `false`，若直接落到「按 1 列处理」的
 兜底，会得出「板块无穷多却允许缩到最小」的反直觉结果。
@@ -204,6 +268,64 @@ UI 上给一个显式入口：`−  100%  ＋`（`.board-zoom-control`），到�
 
 ⚠️ `devicePixelRatio` 叠加了系统 DPI 缩放（125% / 150%），必须以**首次挂载时的 DPR 为基准**
 算相对缩放，否则会把「系统 DPI」误判成「用户缩放」而误报下限。
+
+## `body.style.zoom` 的布局补偿（底侧空白带）
+
+兜底路径走 `document.body.style.zoom = z` 时，会出现一条只在特定操作序列下才现身、
+**刷新即消失**的底侧空白带。这是三层叠加的结果。
+
+**第一层 —— `zoom` 缩放矩形，但 `vh` 认的是未缩放视口**
+
+`body.style.zoom = z` 会让该子树里**每个盒子的最终矩形 = 计算值 × z**，而 CSS 视口不变。
+于是 `height: 100vh` 的 `.app-shell` 布局仍是 `100vh`，渲染出来却只有 `z × 视口高`，
+底部空出 **`(1−z) × 视口高`**（545px 视口、`z=0.9` 时实测留白 54.5px）。
+
+更糟的是方向反了：缩放的本意是「缩小内容、容纳更多板块」，而 shell 被压窄后，
+可用的 **CSS 宽度反而变小** —— 与设计语义南辕北辙。
+
+补偿：把布局尺寸写成 `100vh × (1/z)`，渲染后 = 恰好铺满视口，可用 CSS 宽度变成 `视口/z`，
+与浏览器缩小的语义一致。用「乘 1/z」而不是「除 z」是因为 CSS `calc()` 对变量做除法的兼容性更弱。
+
+```css
+.app-shell, .workspace { height: calc(100vh * var(--app-zoom-layout, 1)); }
+```
+
+⚠️ **只补 `vh`，绝不补百分比**（这是第一版踩的坑）：百分比是在**被缩放元素自己的坐标系**里
+解析的，等于已经自动除过 z 了；再乘一次 `1/z` 就是双重补偿 —— 实测右侧凭空多出 120px，
+缩放按钮被挤出视口点不到。`diag_zoom_units.mjs` 的实测对照：
+
+| 单位 | 计算值（z=0.9） | 渲染矩形 | 是否补偿 |
+|---|---|---|---|
+| `vh` | 545 | 490.5 | ✅ 必须补 1/z |
+| `%` | 1333.33 | 1200 | ❌ 补了就双重补偿 |
+
+**第二层 —— 内联样式不持久，导致「刷新即消失」**
+
+`body.style.zoom` 是 JS 写的内联样式，刷新即清零；而 resize 不会清理它。
+这正好解释了用户报的现象：**刷新后不出现、直接放大窗口不出现、
+「缩到最小再放大」必然出现**（反复触发 resize，但内联 zoom 一直挂着）。
+
+**第三层 —— `zoom` 不改 `devicePixelRatio`，状态与实际脱钩**
+
+`readZoom()` 靠 DPR 读缩放，而 `body.style.zoom` 对 DPR **毫无影响**。
+于是每次 resize 的 `sync()` 都会把 React state 冲回 `1`，
+UI 显示「100%」而 body 上实际是 `0.9`；此后点「＋」又被 `next > 1` 判为越界拒绝执行，
+整条状态彻底卡死到刷新为止。
+
+修法：用单独的 ref 记录「真正落到 body 上的缩放值」，有效缩放 = `readZoom() × bodyZoomRef`；
+复位到 100% 时必须 `removeProperty()` **而不是写 `"1"`** —— 留下内联痕迹同样清不掉。
+
+`boardZoom.ts` 里把这些收成一个纯函数 `bodyZoomDeclaration(z)`，便于单测：
+
+| 输入 | 返回 |
+|---|---|
+| `0.9` | `{ zoom: "0.9", layoutVar: "1.111…" }` |
+| `1`（含 ≥0.9995） | `{ zoom: null, layoutVar: null }` ← 表示「移除属性」 |
+| 越界值 | 钳制到 `[0.1, 5]` |
+
+**验收**（`_build/verify_bottom_gap.mjs`，39 PASS / 0 FAIL）：完整复跑用户报告的操作序列
+（1080×545 → 直接放大 → 420×300 → 放大回 → 抖动 → 刷新），全程底侧 / 右侧空白 = **0px**，
+且复位后 `body.style.zoom` 与 `--app-zoom-layout` 均被移除。
 
 ## 构建
 

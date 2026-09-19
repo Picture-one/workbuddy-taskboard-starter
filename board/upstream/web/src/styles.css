@@ -39,7 +39,11 @@
   --status-blocked: #f34e52;
   --status-done: #5e6ad2;
   --status-canceled: #9e9ea1;
+  /* 三级：静息 0.15 → 悬停容器（预热）0.28 → 指针压在条上 0.46。
+     中间档是 2026-09-18 加的：滚动条由 10px 减到 6px 后更难被鼠标发现，
+     只靠「指针恰好压在 6px 上」这一档太苛刻。 */
   --scrollbar-thumb: rgba(27, 27, 27, 0.15);
+  --scrollbar-thumb-soft: rgba(27, 27, 27, 0.28);
   --scrollbar-thumb-hover: rgba(27, 27, 27, 0.46);
   --card-shadow: 0 3px 6px -2px rgba(0, 0, 0, 0.02), 0 1px 1px rgba(0, 0, 0, 0.04);
   --dialog-shadow: 0 20px 50px rgba(0, 0, 0, 0.17), 0 2px 10px rgba(0, 0, 0, 0.08);
@@ -77,6 +81,7 @@
   --status-done: #6e78df;
   --status-canceled: #85858b;
   --scrollbar-thumb: rgba(238, 238, 239, 0.15);
+  --scrollbar-thumb-soft: rgba(238, 238, 239, 0.32);
   --scrollbar-thumb-hover: rgba(238, 238, 239, 0.5);
   --card-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
   --dialog-shadow: 0 24px 64px rgba(0, 0, 0, 0.58), 0 2px 12px rgba(0, 0, 0, 0.4);
@@ -143,6 +148,18 @@ body,
   margin: 0;
 }
 
+/* ⚠️ 这里**不要**给 `width/height` 加 `--app-zoom-layout` 补偿 —— 加了会双重补偿。
+ *
+ * 实测（Chrome 152，`_build/diag_zoom_units.mjs`）：
+ *   - 矩形的最终尺寸 = 计算值 × z（body 计算值 1333.33、矩形 1200，正好 ×0.9）；
+ *   - **百分比在「被缩放元素自己的坐标系」里解析**：body 的 `100%` 拿到的已经是
+ *     `含块 / z`（1080/0.9 = 1200），所以 `100%` 这一路**自带** 1/z 补偿；
+ *     再乘一次就成了 1/z²，实测右侧会多出 120px（把内容挤出屏幕）。
+ *   - **只有视口单位 `vh`/`vw` 需要补**：它们认的是未缩放视口（100vh 恒等于
+ *     `innerHeight`），却同样会被 ×z 缩小，所以必须显式乘 1/z。
+ *     `.app-shell` / `.workspace` 用的正是 `100vh`，见下面两处。
+ *
+ * 结论：百分比链路（`html`→`body`→`#root`）保持原样，只补 `vh`。 */
 body {
   overflow: hidden;
   background: var(--bg);
@@ -241,11 +258,26 @@ kbd {
   border: 0 !important;
 }
 
+/* ⚠️ 这里的 `calc(100vh * var(--app-zoom-layout, 1))` 不是装饰，是补偿项，别改回 `100vh`。
+ *
+ * 背景（2026-09-18 底侧空白带）：走 `document.body.style.zoom = z` 这条路做页面缩放时
+ * （见 `useBoardZoomGuard.ts`，宿主没注入 `webFrame.setZoomFactor` 时的兜底），
+ * 该子树里每个盒子的**最终矩形 = 计算值 × z**。而 `100vh` 认的是**未缩放**视口
+ * （恒等于 `innerHeight`），于是外壳渲染出来只有 `z × 视口高`，底部留下
+ * `(1−z)×视口高` 的空白带。它只在缩小时出现、刷新后消失（内联样式不持久），
+ * 与用户报告的「刷新后不出现、缩到最小再放大仍在」完全对齐。
+ *
+ * 补偿：布局高度写成 `100vh × (1/z)`，渲染后 = `z × (100vh/z)` = 恰好铺满视口。
+ * `--app-zoom-layout` 由 JS 在写 `body.style.zoom` 的同时写到 `<html>` 上（见 `boardZoom.ts`
+ * 的 `bodyZoomDeclaration`）。未缩放时变量缺省为 1，行为与改动前完全一致。
+ *
+ * 只补 `vh`、**不要**顺手补这里的 `width: 100%`：百分比在被缩放元素的坐标系里
+ * 解析时已经自带 1/z（实测见 `body` 上方的注释），再补一次会把内容挤出屏幕右侧。 */
 .app-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   width: 100%;
-  height: 100vh;
+  height: calc(100vh * var(--app-zoom-layout, 1));
   overflow: hidden;
   background: var(--bg);
 }
@@ -281,12 +313,14 @@ kbd {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+/* 补偿项同 `.app-shell`：`100vh` 认未缩放视口，却会被 body 的 zoom 乘成 `z × 视口`，
+ * 不补就会在底部留下 `(1−z)×视口高` 的空白带。同理不补 `min-width` 等百分比项。 */
 .workspace {
   position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  height: 100vh;
+  height: calc(100vh * var(--app-zoom-layout, 1));
   overflow: hidden;
   background: var(--bg);
 }
@@ -1925,9 +1959,9 @@ kbd {
   margin: 0;
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
-  line-height: 18px;
+  line-height: 19px;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -1938,8 +1972,8 @@ kbd {
   margin: 0;
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 16px;
+  font-size: 12px;
+  line-height: 17px;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -1977,7 +2011,7 @@ kbd {
   border: var(--border-hairline) solid var(--border);
   border-radius: 10px;
   color: var(--text-tertiary);
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -7095,8 +7129,8 @@ kbd {
 }
 
 .app-shell.embedded .task-card h3 {
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 19px;
 }
 
 .app-shell.embedded .search-field {
@@ -7424,9 +7458,9 @@ kbd {
   border-radius: 16px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
-  line-height: 15px;
+  line-height: 16px;
 }
 
 .view-tab:first-child {
@@ -7694,15 +7728,37 @@ kbd {
 /* ===== .board-scroll 的滚动条（必须可见） =====
    这是「放大后右侧板块被遮挡」的唯一抓手：滚动能力一直在，缺的是可见滚动条。
    恢复为常驻的细滚动条（非 overlay），保证鼠标能直接抓住拖动。 */
+/* ⚠️ 这两个 `auto` 是**必须的**，不是笔误，别改回 `thin`。
+ *
+ * 实测（Chrome 152）：滚动条占位宽度（gutter）**只由标准属性 `scrollbar-width` 决定**，
+ *   thin = 10px、auto = 15px、none = 0；
+ *   而 legacy 的 `::-webkit-scrollbar { width }` **对布局完全没有影响**
+ *   —— 它能被 getComputedStyle 如实回报成 6px/14px，但 gutter 纹丝不动（实测恒为 10px）。
+ * 原因是：只要元素上声明了 `scrollbar-width` / `scrollbar-color`（本文件的 `*` 规则
+ *   就给所有元素都声明了 `thin`），Chromium 会整体停用 legacy `::-webkit-scrollbar` 路径。
+ *
+ * 因此要把占位压到 6px，必须先把两个标准属性显式复位成 `auto`，
+ * 让下面那条 `.board-scroll::-webkit-scrollbar { width: 6px }` 重新接管尺寸。
+ * 实测对照：thin + webkit6px → 10px（无效）；auto + auto + webkit6px → 6px（生效）。
+ *
+ * 副作用已评估：`scrollbar-width` 由 `*` 规则给每个元素单独声明，
+ * 所以这里改成 auto **不会**被后代继承放大（后代仍各自命中 `*` 的 thin）。
+ *
+ * 风险：若未来 Chromium 彻底移除 legacy 滚动条，这里会退化为 auto 的 15px。
+ * 届时的兜底是把本块改回 `thin`（10px）——比 15px 好，且仍然是「能抓」的。 */
 .board-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: auto;
+  scrollbar-color: auto;
 }
 
+/* 2026-09-18：由 10px 减到 6px。
+   占位宽度（gutter）从 10px 降到 6px —— 这才是真正吃掉屏幕高度的部分；
+   可见条本身靠下面 thumb 的 `border` 留白控制，仍保持 4px 可见宽度，
+   所以「能看见、能抓住」不打折，只是少占 4px。 */
 .board-scroll::-webkit-scrollbar {
   display: block;
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
   background: transparent;
 }
 
@@ -7718,10 +7774,12 @@ kbd {
   height: 0;
 }
 
+/* 可见宽度 = 6px - 2 * 1px = 4px，与减细前的 10px - 2 * 3px 一致。
+   `min-width/min-height: 30px` 保证即使列表很长，滑块也不会缩成一个点。 */
 .board-scroll::-webkit-scrollbar-thumb {
   min-width: 30px;
   min-height: 30px;
-  border: 3px solid transparent;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: var(--scrollbar-thumb);
   background-clip: padding-box;
@@ -7849,9 +7907,9 @@ kbd {
 
 .column-heading h2 {
   color: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
-  line-height: 16.5px;
+  line-height: 18px;
 }
 
 .column-status-icon {
@@ -7915,7 +7973,7 @@ kbd {
 
 .column-day-label {
   overflow: hidden;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 580;
   letter-spacing: 0.02em;
   text-overflow: ellipsis;
@@ -7929,7 +7987,7 @@ kbd {
   border-radius: 999px;
   background: var(--surface-muted);
   color: var(--text-tertiary);
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -7975,8 +8033,8 @@ kbd {
 }
 
 .card-topline {
-  height: 16px;
-  min-height: 16px;
+  height: 18px;
+  min-height: 18px;
 }
 
 .task-card.status-in_review .card-topline {
@@ -7998,7 +8056,7 @@ kbd {
   border-radius: 32px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 400;
   line-height: 15px;
   cursor: pointer;
@@ -8022,17 +8080,17 @@ kbd {
 
 .task-identifier {
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
-  line-height: 15px;
+  line-height: 16px;
 }
 
 .task-card h3,
 .app-shell.embedded .task-card h3 {
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
-  line-height: 18px;
+  line-height: 19px;
 }
 
 .task-card-media {
@@ -8103,7 +8161,7 @@ kbd {
   border-radius: 999px;
   background: var(--surface);
   color: var(--text-tertiary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 450;
   line-height: 18px;
   white-space: nowrap;
@@ -8122,7 +8180,7 @@ kbd {
   border-radius: 999px;
   background: var(--surface);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 450;
   line-height: 18px;
   white-space: nowrap;
@@ -8164,7 +8222,7 @@ kbd {
   border-radius: 999px;
   background: var(--surface);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 450;
   line-height: 18px;
   text-overflow: ellipsis;
@@ -8593,7 +8651,7 @@ kbd {
   gap: 3px;
   border-radius: 13px;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .other-tasks-tab.is-active {
@@ -8644,22 +8702,29 @@ kbd {
    这些容器一直是 `overflow-y: auto`、能滚，但滚动条被隐藏 → 只看得见右边被截断，
    却没有任何抓手。改为细滚动条常驻；`other-tasks-list` 保持隐藏（它在
    自适应宽度的侧栏里，多一条滚动条会挤压卡片）。 */
+/* 同 `.board-scroll` 的 `auto`：必须先复位标准属性，legacy 的 6px 才生效。
+   纵向条变窄后，卡片正文可用的横向宽度也多回 4px。 */
 .board-column,
 .column-list {
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: auto;
+  scrollbar-color: auto;
 }
 
+/* 唯一仍然隐藏滚动条的容器：它在自适应宽度的侧栏里，多一条滚动条会挤压卡片。
+   注意这里用的是标准属性 `scrollbar-width: none`（实测 gutter 恒为 0），
+   **不能**换成上面那套 auto + legacy 写法。 */
 .other-tasks-list {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 
+/* 同 `.board-scroll`：占位 10px → 6px，可见条仍是 4px（由下方 thumb 的
+   `border: 1px` 决定）。纵向条变窄后，卡片正文可用的横向宽度也多回 4px。 */
 .board-column::-webkit-scrollbar,
 .column-list::-webkit-scrollbar {
   display: block;
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
   background: transparent;
 }
 
@@ -8683,7 +8748,7 @@ kbd {
 .column-list::-webkit-scrollbar-thumb {
   min-width: 30px;
   min-height: 30px;
-  border: 3px solid transparent;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: var(--scrollbar-thumb);
   background-clip: padding-box;
@@ -8692,6 +8757,15 @@ kbd {
 .board-column::-webkit-scrollbar-thumb:hover,
 .column-list::-webkit-scrollbar-thumb:hover {
   background-color: var(--scrollbar-thumb-hover);
+}
+
+/* 「悬停预热」：指针进入整块看板 / 任一板块列，就先提亮到中间档。
+   6px 的条本身太窄，要求用户精确命中才给反馈，等于没有反馈。
+   指针真正压在条上时，上面两条 `:hover` 规则会覆盖成更深的 hover 档。 */
+.board-scroll:hover::-webkit-scrollbar-thumb,
+.board-column:hover::-webkit-scrollbar-thumb,
+.column-list:hover::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb-soft);
 }
 
 .other-tasks-list::-webkit-scrollbar {
@@ -8706,21 +8780,20 @@ kbd {
    （实测可滚上限 x 达 832px），但**没有任何滚动条可抓**，
    鼠标拖不动、只能按方向键 —— 这正是用户报的问题。
    修复：`.board-scroll` / `.board-column` / `.column-list` 三者的滚动条
-   已各自由上方专属规则显式恢复；只有 `.other-tasks-list` 继续隐藏。 */
-.other-tasks-list::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
-}
+   已各自由上方专属规则显式恢复；只有 `.other-tasks-list` 继续隐藏。
 
+   2026-09-18：原本这里紧跟一条与上方完全相同的
+   `.other-tasks-list::-webkit-scrollbar { display: none }` 重复规则，已删除。
+   重复规则本身无害，但会让人误以为「隐藏只发生在这一处」，
+   从而漏改上方那条真正生效的规则。 */
 .other-tasks-list .task-card {
   min-height: 80px;
   padding: 16px;
 }
 
 .other-tasks-list .task-card h3 {
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 19px;
 }
 
 .other-tasks-list.is-archived {

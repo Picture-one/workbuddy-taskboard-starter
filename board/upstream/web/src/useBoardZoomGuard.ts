@@ -21,6 +21,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ABSOLUTE_MIN_ZOOM,
+  APP_ZOOM_LAYOUT_VAR,
+  bodyZoomDeclaration,
   computeMinZoom,
   formatZoom,
   isAtOrBelowMinZoom,
@@ -58,6 +60,13 @@ export interface BoardZoomGuard {
 const ZOOM_STEP = 0.1;
 
 /**
+ * 浮点与浏览器取整的容差。
+ * 与 `boardZoom.ts` 的 `isAtOrBelowMinZoom` 默认容差（0.01）保持同一量级，
+ * 用于判断「下限是否真的比当前值更小」，避免把 0.85 与 0.85 误判成需要吸附。
+ */
+const ZOOM_TOLERANCE = 0.001;
+
+/**
  * 监听并约束浏览器缩放。
  *
  * @param columnCount 当前显示的板块数（含「今日推送」列）。
@@ -74,19 +83,47 @@ export function useBoardZoomGuard(columnCount: number, enabled: boolean): BoardZ
   const [clamped, setClamped] = useState(false);
   const clampCountRef = useRef(0);
 
+  /**
+   * 走 body 路径时**实际落到 body 上的**缩放值（1 = 没施加）。
+   *
+   * 为什么必须自己记一份：`document.body.style.zoom` **不会**改变 `devicePixelRatio`，
+   * 所以 `readZoom()` 读回来恒为 1。2026-09-18 的「控件显示 100%、body 实际 90%」
+   * 正是这个脱钩 —— resize 时 `sync()` 用 `readZoom()` 把 state 重置成 1，
+   * 于是「放大」因 `next > 1.0001` 被拒而彻底失效，残留的内联 zoom 与底侧空白带
+   * 一直卡到刷新。
+   *
+   * 有效缩放 = 浏览器自身缩放（`readZoom`）× 我们施加的 body 缩放。
+   */
+  const bodyZoomRef = useRef(1);
+
   const applyZoom = useCallback((target: number): boolean => {
     const normalized = Math.min(Math.max(target, 0.1), 5);
     const webFrame = getWebFrame();
     if (webFrame && typeof webFrame.setZoomFactor === "function") {
       try {
         webFrame.setZoomFactor(normalized);
+        // 这条路会真实改变 devicePixelRatio，`readZoom()` 自己就能读回来，
+        // 因此**不要**记进 bodyZoomRef —— 否则有效缩放会被算成平方。
         return true;
       } catch {
         /* 落到 body.style.zoom */
       }
     }
     if (typeof document !== "undefined" && document.body) {
-      document.body.style.zoom = String(normalized);
+      const decl = bodyZoomDeclaration(normalized);
+      if (decl.zoom === null) {
+        // 100% 时必须**移除**而不是写 "1"：留下内联属性的话，
+        // 任何一次没清理干净的写入都会让空白带复活，且刷新前看不出原因。
+        document.body.style.removeProperty("zoom");
+      } else {
+        document.body.style.zoom = decl.zoom;
+      }
+      if (decl.layoutVar === null) {
+        document.documentElement.style.removeProperty(APP_ZOOM_LAYOUT_VAR);
+      } else {
+        document.documentElement.style.setProperty(APP_ZOOM_LAYOUT_VAR, decl.layoutVar);
+      }
+      bodyZoomRef.current = decl.zoom === null ? 1 : Number(decl.zoom);
       return true;
     }
     return false;
@@ -98,7 +135,11 @@ export function useBoardZoomGuard(columnCount: number, enabled: boolean): BoardZ
     let frame = 0;
     const sync = () => {
       frame = 0;
-      const current = readZoom(baselineDprRef.current);
+      // 有效缩放 = 浏览器自身缩放 × 我们施加在 body 上的缩放。
+      // 只取 `readZoom()` 会漏掉 body 路径（body 缩放不改 devicePixelRatio），
+      // 结果是每次 resize 都把 state 冲回 100%、与 body 上的真实值脱钩。
+      const raw = readZoom(baselineDprRef.current) * bodyZoomRef.current;
+      const current = Math.min(Math.max(raw, 0.1), 5);
       setZoom(current);
       if (current < minZoom - 0.001) {
         // 越界：纠偏回下限。能用哪条路就用哪条，都不可用则只提示。
@@ -123,7 +164,20 @@ export function useBoardZoomGuard(columnCount: number, enabled: boolean): BoardZ
   const zoomOut = useCallback(() => {
     if (!enabled) return false;
     const next = Math.round((zoom - ZOOM_STEP) * 100) / 100;
+
+    // 步进（0.10）与下限阶梯（0.05 的倍数）不是整数倍关系，因此会「跨过」下限：
+    // 例如 minZoom=0.85 时从 0.90 缩小，next=0.80 已越界被拒，但当前 zoom=0.90
+    // 仍高于下限 → atMinZoom=false → 按钮永不禁用，用户点了没反应也没提示。
+    //
+    // 正确行为：跨过时**吸附到下限**（若下限确实比当前值更小），
+    // 这样「缩小」总能走到真实的边界；只有已经在下限时才拒绝并标 clamped。
     if (isAtOrBelowMinZoom(next, minZoom)) {
+      if (minZoom < zoom - ZOOM_TOLERANCE) {
+        applyZoom(minZoom);
+        setZoom(minZoom);
+        setClamped(true);
+        return true;
+      }
       setClamped(true);
       return false;
     }
